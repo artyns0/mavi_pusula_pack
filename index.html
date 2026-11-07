@@ -748,11 +748,22 @@ async function klines(sym,iv,limit){
     const now=Date.now();return (await r.json()).filter(k=>k[6]<now).map(k=>({t:k[0],o:+k[1],h:+k[2],l:+k[3],c:+k[4],v:+k[5]}));
   }catch(e){err=e}}throw err}
 
-// ================= SANAL PORTFÖY BOTU (20 coin, ortak risk) =================
-const UNIVERSE=["BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT","BNBUSDT","DOGEUSDT","ADAUSDT","SUIUSDT","LINKUSDT","AVAXUSDT",
-  "TRXUSDT","LTCUSDT","DOTUSDT","BCHUSDT","NEARUSDT","APTUSDT","ARBUSDT","OPUSDT","PEPEUSDT","WIFUSDT"];
-const MAX_OPEN=5;
-const port={iv:live.iv,syms:[],series:{},px:{},ws:null,wsOk:false,host:0,retry:1000,ready:false,events:[],batch:null,poll:null,lastClose:null};
+// ================= SANAL PORTFÖY BOTU (Binance'teki tüm likit USDT coinleri, ortak risk) =================
+// Evren: Binance spot'taki tüm USDT pariteleri; stabil coinler, kaldıraçlı tokenlar ve 24s hacmi MIN_VOL altı (çok sığ) olanlar hariç.
+// Yeni listelenen coinler 10 dakikada bir kontrol edilir; karar için en az 120 mum geçmişi olunca taramaya eklenir.
+const MIN_VOL=1e6, MIN_BARS=120, WS_CHUNK=200;
+const EXCL=s=>!s.endsWith("USDT")||/^(USDC|FDUSD|TUSD|BUSD|USDP|DAI|EUR|AEUR|EURI|PAXG|USD1|XUSD|BFUSD|USDE|RLUSD|USDS)USDT$/.test(s)||/(UP|DOWN|BULL|BEAR)USDT$/.test(s);
+async function tickers24(){let err;for(const h of REST_HOSTS){try{const r=await fetch(`${h}/api/v3/ticker/24hr?type=MINI`,{cache:"no-store"});
+  if(!r.ok)throw new Error("HTTP "+r.status);return (await r.json()).map(t=>({s:t.symbol,q:+t.quoteVolume,c:+t.lastPrice}))}catch(e){err=e}}throw err}
+async function universe(){let rows;
+  if(typeof mkt!=="undefined"&&mkt.map.size>100)rows=[...mkt.map.values()].map(t=>({s:t.s,q:t.q}));
+  else try{rows=await tickers24()}catch{rows=[]}
+  return rows.filter(t=>!EXCL(t.s)&&t.q>=MIN_VOL).sort((a,b)=>b.q-a.q).map(t=>t.s)}
+async function pool(items,n,fn,onDone){let i=0,done=0;const out=new Array(items.length);
+  await Promise.all(Array.from({length:Math.min(n,items.length)},async()=>{while(i<items.length){const k=i++;
+    try{out[k]={ok:true,v:await fn(items[k])}}catch(e){out[k]={ok:false}}done++;onDone&&onDone(done,items.length)}}));return out}
+const MAX_OPEN=8;
+const port={iv:live.iv,syms:[],series:{},px:{},socks:[],wsOk:false,host:0,retry:1000,ready:false,events:[],batch:null,poll:null,lastClose:null,load:null,gen:0,uni:null};
 function newPort(){return Object.assign(newState(),{positions:{},pendings:{},lastT:{},startT:Date.now(),scans:0})}
 const portKey=()=>`mp.port.${port.iv}`;
 function savePort(){if(!P)return;store.set(portKey(),{P:{...P,trades:P.trades.slice(-500),decisions:P.decisions.slice(-500),eq:P.eq.slice(-3000)},events:port.events.slice(0,150)})}
@@ -798,7 +809,7 @@ function processBar(sym,i,quiet){
     res.verdict=v;res.dec=dec}
   P.lastT[sym]=bar.t;return res}
 // Aynı anda kapanan mumları tek "tarama" olarak özetle
-function batchAdd(r,t){if(!port.batch){port.batch={t,n:0,dirs:0,blocked:0};setTimeout(batchFlush,1500)}
+function batchAdd(r,t){if(!port.batch){port.batch={t,n:0,dirs:0,blocked:0};setTimeout(batchFlush,3000)}
   const b=port.batch;b.n++;if(r.dec&&r.dec.direction!=="flat")b.dirs++;if(r.verdict&&r.verdict!=="onaylandı"&&r.verdict!=="karar flat")b.blocked++}
 function batchFlush(){const b=port.batch;port.batch=null;if(!b)return;P.scans++;
   const eq=portRisk(b.t);P.eq.push({t:b.t,eq,c:null});
@@ -820,34 +831,53 @@ function liveStops(){if(!P||!port.ready)return;const t=Date.now();let changed=fa
   if(changed){portRisk(t);savePort();render()}}
 setInterval(liveStops,1000);
 
+async function addSeries(syms,gen){
+  const got=await pool(syms,8,s=>klines(s,port.iv,300),(d,n)=>{if(gen===port.gen&&!port.ready){port.load=`${d}/${n}`;if(d%10===0||d===n)renderLive()}});
+  if(gen!==port.gen)return [];const ok=[];
+  syms.forEach((s,i)=>{const g=got[i];if(!g.ok||g.v.length<MIN_BARS)return;port.series[s]={D:g.v,F:features(g.v)};ok.push(s)});return ok}
 async function portStart(){
-  portStop();port.iv=live.iv;port.ready=false;port.events=[];
+  portStop();const gen=++port.gen;port.iv=live.iv;port.ready=false;port.events=[];port.series={};port.syms=[];port.load="0/?";
   const saved=store.get(portKey(),null);
   P=saved?Object.assign(newPort(),saved.P):newPort();if(saved)port.events=saved.events||[];
-  port.syms=[...new Set([...UNIVERSE,...Object.keys(P.positions),...Object.keys(P.pendings)])];
-  const got=await Promise.allSettled(port.syms.map(s=>klines(s,port.iv,300)));
-  port.series={};port.syms=port.syms.filter((s,i)=>{if(got[i].status!=="fulfilled"||got[i].value.length<120)return false;
-    const D=got[i].value;port.series[s]={D,F:features(D)};return true});
+  ev("info","Binance'teki coin listesi alınıyor…");render();
+  const uni=await universe();if(gen!==port.gen)return;
+  const want=[...new Set([...Object.keys(P.positions),...Object.keys(P.pendings),...uni])];
+  ev("info",`${want.length} likit USDT coini bulundu, mum geçmişleri yükleniyor…`);render();
+  port.syms=await addSeries(want,gen);if(gen!==port.gen)return;port.load=null;
   if(!port.syms.length){ev("info","Piyasa verisi alınamadı. Bağlantıyı kontrol et.");render();return}
   if(saved){let missed=0;
     for(const s of port.syms){const ser=port.series[s],lt=P.lastT[s];if(!lt)continue;
       for(let i=ser.D.findIndex(r=>r.t>lt);i>=0&&i<ser.D.length;i++){processBar(s,i,true);missed++}}
-    portRisk(Date.now());ev("info",`Bot kaldığı yerden devam ediyor${missed?` · sayfa kapalıyken kapanan ${missed} mum işlendi`:""}.`)}
+    portRisk(Date.now());ev("info",`Bot kaldığı yerden devam ediyor · ${port.syms.length} coin${missed?` · sayfa kapalıyken kapanan ${missed} mum işlendi`:""}.`)}
   else{ev("info",`Sanal portföy 10.000 USDT ile başladı · ${port.syms.length} coin · ${IV_TR[port.iv]} mumlar · en fazla ${MAX_OPEN} açık pozisyon.`);
-    // ilk tarama: son kapanan mum üzerinde karar
-    for(const s of port.syms)batchAdd(processBar(s,port.series[s].D.length-1),Date.now())}
+    for(const s of port.syms)batchAdd(processBar(s,port.series[s].D.length-1,true),Date.now())}
   for(const s of port.syms)if(!P.lastT[s])P.lastT[s]=port.series[s].D.at(-1).t;
-  S_live=P;if(mode==="live")S=P;port.ready=true;port.lastClose=port.series[port.syms[0]].D.at(-1).t+IV_MS[port.iv];
-  portConnect();port.poll=setInterval(()=>{if(!port.wsOk)port.syms.forEach(portPollOne)},60000);savePort();render()}
-function portStop(){clearInterval(port.poll);if(port.ws){port.ws.onclose=null;try{port.ws.close()}catch{}}port.ws=null;port.wsOk=false}
+  S_live=P;if(mode==="live")S=P;port.ready=true;port.lastClose=Math.max(...port.syms.map(s=>port.series[s].D.at(-1).t))+IV_MS[port.iv];
+  portConnect();
+  port.poll=setInterval(()=>{if(!port.wsOk)port.syms.forEach(portPollOne)},60000);
+  port.uni=setInterval(()=>portRefresh(gen),600000);
+  savePort();render()}
+// 10 dakikada bir: Binance'e yeni eklenen / hacmi yükselen coinleri taramaya ekle
+async function portRefresh(gen){if(!port.ready||gen!==port.gen)return;
+  const uni=await universe(),fresh=uni.filter(s=>!port.series[s]);if(!fresh.length||gen!==port.gen)return;
+  const ok=await addSeries(fresh,gen);if(!ok.length||gen!==port.gen)return;
+  for(const s of ok)P.lastT[s]=port.series[s].D.at(-1).t;port.syms.push(...ok);
+  ev("info",`YENİ COİN · ${ok.slice(0,6).map(base).join(", ")}${ok.length>6?` ve ${ok.length-6} coin daha`:""} taramaya eklendi · toplam ${port.syms.length}`);
+  portStop(true);portConnect();savePort();render()}
+function portStop(keepTimers){if(!keepTimers){clearInterval(port.poll);clearInterval(port.uni)}
+  for(const ws of port.socks){ws.onclose=null;try{ws.close()}catch{}}port.socks=[];port.wsOk=false}
 function portConnect(){
-  const url=`${WS_HOSTS[port.host]}/stream?streams=`+port.syms.map(s=>s.toLowerCase()+"@kline_"+port.iv).join("/");
-  let ws;try{ws=new WebSocket(url)}catch{return portRetry()}port.ws=ws;
-  ws.onopen=()=>{port.wsOk=true;port.retry=1000;ev("info",`Bot ${port.syms.length} coinin canlı mum akışına bağlandı.`);render()};
+  for(let i=0;i<port.syms.length;i+=WS_CHUNK)portSock(port.syms.slice(i,i+WS_CHUNK),port.gen,true)}
+function portSock(list,gen,first){
+  const url=`${WS_HOSTS[port.host]}/stream?streams=`+list.map(s=>s.toLowerCase()+"@kline_"+port.iv).join("/");
+  let ws;try{ws=new WebSocket(url)}catch{return portRetry(list,gen)}port.socks.push(ws);
+  ws.onopen=()=>{const was=port.wsOk;port.wsOk=true;port.retry=1000;if(!was)ev("info",`Bot ${port.syms.length} coinin canlı mum akışına bağlandı.`);render()};
   ws.onmessage=m=>{let d;try{d=JSON.parse(m.data).data}catch{return}if(!d||d.e!=="kline")return;
     port.px[d.s]=+d.k.c;if(d.k.x)onPortClose(d.s,d.k)};
-  ws.onclose=()=>{port.wsOk=false;portRetry()};ws.onerror=()=>{try{ws.close()}catch{}}}
-function portRetry(){port.host=(port.host+1)%WS_HOSTS.length;const w=port.retry;port.retry=Math.min(30000,w*2);setTimeout(()=>{if(!port.wsOk&&port.syms.length)portConnect()},w)}
+  ws.onclose=()=>{port.socks=port.socks.filter(x=>x!==ws);port.wsOk=port.socks.some(x=>x.readyState===1);portRetry(list,gen)};
+  ws.onerror=()=>{try{ws.close()}catch{}}}
+function portRetry(list,gen){port.host=(port.host+1)%WS_HOSTS.length;const w=port.retry;port.retry=Math.min(30000,w*2);
+  setTimeout(()=>{if(gen===port.gen)portSock(list,gen)},w)}
 
 // ================= GRAFİK COİNİ (sadece görüntü + geçmiş testi) =================
 async function liveStart(){
@@ -891,7 +921,7 @@ function renderLive(){
     pos.map(p=>{const u=upnl(p),px=pxOf(p.sym),r=(p.dir==="long"?1:-1)*(px/p.entry-1),mins=Math.max(0,Math.floor((Date.now()-p.t)/60000));
       return `<tr class="prow" data-s="${p.sym}"><td><b>${base(p.sym)}</b> <span class="small">${p.setup}</span></td><td><span class="tag ${p.dir}">${p.dir}</span></td><td class="num">${pfmt(p.entry)}</td><td class="num"><b>${pfmt(px)}</b></td><td class="num ${u>=0?"pos":"neg"}"><b>${u>=0?"+":""}${fmt(u)}</b></td><td class="num ${r>=0?"pos":"neg"}">${r>=0?"+":""}${pct(r,2)}</td><td class="num hide-sm neg">${pfmt(p.stop)}</td><td class="num hide-sm pos">${pfmt(p.target)}</td><td class="num hide-sm">${mins<60?mins+" dk":Math.floor(mins/60)+" sa "+mins%60+" dk"}</td></tr>`}).join("")
     }${pend.map(([s,d])=>`<tr><td><b>${base(s)}</b> <span class="small">${d.dec.setup}</span></td><td><span class="tag ${d.dec.direction}">${d.dec.direction}</span></td><td colspan="7" class="small">Sinyal onaylandı, sonraki mum açılışında girilecek</td></tr>`).join("")}</tbody></table>`
-    :'<div class="note">Şu an açık pozisyon yok. Bot her mum kapanışında 20 coini tarıyor; uygun sinyal gelince alım burada saniyelik kâr/zararıyla görünür.</div>';
+    :`<div class="note">${port.load?`Coin geçmişleri yükleniyor: ${port.load}. Bu ilk açılışta 1-2 dakika sürebilir.`:`Şu an açık pozisyon yok. Bot her mum kapanışında ${port.syms.length} coini tarıyor; uygun sinyal gelince alım burada saniyelik kâr/zararıyla görünür.`}</div>`;
   if(mode!=="live")return;
   const eq=portEquity(),d=eq-START;
   $("sEq").textContent=fmt(eq,0);
@@ -899,10 +929,10 @@ function renderLive(){
   $("bigPnl").textContent=(d>=0?"+":"")+fmt(d)+" USDT";$("bigPnl").className="big "+(d>=0?"":"neg");
   $("bigLabel").textContent="Sanal portföy · kâr / zarar (anlık)";
   $("runDot").className="dot"+(P.killed?" off":port.wsOk?" pulse":" idle");
-  $("runText").textContent=P.killed?"Kill switch":port.wsOk?`Bot canlı · ${port.syms.length} coin`:"Bot bağlanıyor";
+  $("runText").textContent=P.killed?"Kill switch":port.load?`Yükleniyor ${port.load}`:port.wsOk?`Bot canlı · ${port.syms.length} coin`:"Bot bağlanıyor";
   const next=(port.lastClose||Date.now())+IV_MS[port.iv],left=Math.max(0,next-Date.now()),mm=Math.floor(left/60000),ss=Math.floor(left%60000/1000);
   $("liveInfo").innerHTML=`<span class="li"><span class="k">Sonraki tarama</span><b>${String(mm).padStart(2,"0")}:${String(ss).padStart(2,"0")}</b></span>
-    <span class="li"><span class="k">Taranan</span><b>${port.syms.length} coin · ${IV_TR[port.iv]}</b></span>
+    <span class="li"><span class="k">Taranan</span><b>${port.load?"yükleniyor "+port.load:port.syms.length+" coin"} · ${IV_TR[port.iv]}</b></span>
     <span class="li"><span class="k">Tarama sayısı</span><b>${P.scans}</b></span>
     <span class="li"><span class="k">Açık K/Z</span><b class="${eq-P.cash>=0?"pos":"neg"}">${eq-P.cash>=0?"+":""}${fmt(eq-P.cash)}</b></span>
     <span class="li"><span class="k">Başlangıç</span><b>${new Date(P.startT).toLocaleString("tr-TR",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</b></span>`;
@@ -919,7 +949,12 @@ function renderLive(){
 setInterval(()=>renderLive(),1000);
 
 // ---------- PİYASA ŞERİDİ: tüm USDT paritelerinin saniyelik fiyatı (herkese açık akış) ----------
-const mkt={map:new Map(),shown:[],ws:null,ok:false,host:0,retry:1000,built:0};
+const mkt={map:new Map(),shown:[],ws:null,ok:false,host:0,retry:1000,built:0,cap:new Map(),capT:0};
+// Piyasa değeri sıralaması: CoinGecko herkese açık listesi (anahtarsız). Fiyatlar yine Binance akışından gelir.
+async function capLoad(){try{const r=await fetch("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1",{cache:"no-store"});
+  if(!r.ok)return;const a=await r.json();const m=new Map();for(const c of a){const k=String(c.symbol).toUpperCase()+"USDT";if(!m.has(k)&&c.market_cap)m.set(k,{rank:c.market_cap_rank,cap:c.market_cap,name:c.name})}
+  if(m.size){mkt.cap=m;mkt.capT=Date.now();mkt.built=0}}catch{}}
+capLoad();setInterval(capLoad,15*60000);
 const STABLE=/^(USDC|FDUSD|TUSD|BUSD|USDP|DAI|EUR|AEUR|EURI|PAXG|USD1|XUSD|BFUSD|USDE)USDT$/;
 function mktConnect(){
   let ws;try{ws=new WebSocket(`${WS_HOSTS[mkt.host]}/stream?streams=!miniTicker@arr/!ticker_1h@arr`)}catch{return mktRetry()}
@@ -929,18 +964,19 @@ function mktConnect(){
     if(msg.stream&&msg.stream.includes("1h")){for(const t of a){const r=mkt.map.get(t.s);if(r)r.h1=+t.P/100}return}
     for(const t of a){if(!t.s.endsWith("USDT")||STABLE.test(t.s)||/(UP|DOWN|BULL|BEAR)USDT$/.test(t.s))continue;
       const prev=mkt.map.get(t.s);mkt.map.set(t.s,{s:t.s,c:+t.c,o:+t.o,q:+t.q,h:+t.h,l:+t.l,prev:prev?prev.c:+t.c,h1:prev?prev.h1:null})}
-    if(!mkt.built||Date.now()-mkt.built>120000)mktBuild();mktUpdate()};
+    if(!mkt.built||Date.now()-mkt.built>600000)mktBuild();mktUpdate()};
   ws.onclose=()=>{mkt.ok=false;$("stDot").className="dot idle";mktRetry()};
   ws.onerror=()=>{try{ws.close()}catch{}};
 }
 function mktRetry(){mkt.host=(mkt.host+1)%WS_HOSTS.length;const w=mkt.retry;mkt.retry=Math.min(30000,w*2);setTimeout(mktConnect,w)}
 function mktBuild(){
-  const all=[...mkt.map.values()].sort((a,b)=>b.q-a.q).slice(0,40);if(all.length<5)return;
+  const byCap=mkt.cap.size>20;
+  const all=[...mkt.map.values()].filter(t=>!byCap||mkt.cap.has(t.s)).sort((a,b)=>byCap?mkt.cap.get(a.s).rank-mkt.cap.get(b.s).rank:b.q-a.q).slice(0,50);if(all.length<5)return;
   mkt.shown=all.map(t=>t.s);mkt.built=Date.now();
   const item=s=>`<button class="tk" data-s="${s}" title="${s} paritesine geç (sanal)"><b>${s.replace(/USDT$/,"")}</b><span class="p"></span><span class="c"></span></button>`;
   const html=mkt.shown.map(item).join("");$("stTrack").innerHTML=html+html; // kesintisiz kayma için iki kopya
   $("stTrack").style.setProperty("--dur",(mkt.shown.length*3.2)+"s");
-  $("stCount").textContent=`en hacimli ${mkt.shown.length} coin · saniyelik`;
+  $("stCount").textContent=byCap?`piyasa değeri en yüksek ${mkt.shown.length} coin · saniyelik`:`en hacimli ${mkt.shown.length} coin · saniyelik`;
   // seçili pariteyi listede tut
   const sel=$("liveSym");for(const sym of mkt.shown.slice(0,25))if(![...sel.options].some(o=>o.value===sym))sel.add(new Option(sym,sym));
 }
@@ -959,27 +995,27 @@ $("stTrack").addEventListener("click",e=>{const b=e.target.closest(".tk");if(!b)
 mktConnect();
 
 // ---------- PİYASA TABLOSU ----------
-const mt={sort:"q",dir:-1,limit:100,q:"",last:0};
+const mt={sort:"m",dir:-1,limit:100,q:"",last:0};
 const NAMES={BTC:"Bitcoin",ETH:"Ethereum",BNB:"BNB",XRP:"XRP",SOL:"Solana",TRX:"TRON",DOGE:"Dogecoin",ADA:"Cardano",LINK:"Chainlink",AVAX:"Avalanche",SUI:"Sui",TON:"Toncoin",SHIB:"Shiba Inu",DOT:"Polkadot",LTC:"Litecoin",BCH:"Bitcoin Cash",PEPE:"Pepe",NEAR:"NEAR",UNI:"Uniswap",APT:"Aptos",ICP:"Internet Computer",ETC:"Ethereum Classic",XLM:"Stellar",HBAR:"Hedera",FIL:"Filecoin",ARB:"Arbitrum",OP:"Optimism",ATOM:"Cosmos",WIF:"dogwifhat",BONK:"Bonk",FET:"Fetch.ai",INJ:"Injective",RENDER:"Render",AAVE:"Aave",ZEC:"Zcash",ENA:"Ethena",TAO:"Bittensor",SEI:"Sei",TIA:"Celestia",FLOKI:"Floki",WLD:"Worldcoin",ONDO:"Ondo",JUP:"Jupiter",PENGU:"Pudgy Penguins",TRUMP:"Official Trump",HYPE:"Hyperliquid"};
 const avc=s=>{let h=0;for(const ch of s)h=(h*31+ch.charCodeAt(0))%360;return `hsl(${h} 55% 42%)`};
 function mtRender(){
   if(view!=="piyasa")return;const now=Date.now();if(now-mt.last<900)return;mt.last=now;
   let rows=[...mkt.map.values()];
   if(mt.q){const q=mt.q.toUpperCase();rows=rows.filter(r=>r.s.includes(q)||(NAMES[r.s.replace(/USDT$/,"")]||"").toUpperCase().includes(q))}
-  const key={q:r=>r.q,c:r=>r.c,h1:r=>r.h1??-9,d:r=>r.c/r.o-1,s:r=>r.s};
+  const key={m:r=>mkt.cap.get(r.s)?.cap??-1,q:r=>r.q,c:r=>r.c,h1:r=>r.h1??-9,d:r=>r.c/r.o-1,s:r=>r.s};
   rows.sort((a,b)=>{const x=key[mt.sort](a),y=key[mt.sort](b);return (x<y?-1:x>y?1:0)*mt.dir});
   const total=rows.length;rows=rows.slice(0,mt.limit);
   $("mSub").textContent=mkt.map.size?`Binance'teki ${mkt.map.size} USDT paritesi · saniyelik · ${mkt.ok?"canlı":"yeniden bağlanıyor"}`:"Fiyatlar yükleniyor…";
   $("mMore").hidden=total<=mt.limit;
   const th=(k,l,cls="")=>`<th class="${cls}${mt.sort===k?" sorted":""}" data-k="${k}">${l}${mt.sort===k?(mt.dir<0?" ↓":" ↑"):""}</th>`;
   const c=v=>v==null||!isFinite(v)?'<td class="num small">—</td>':`<td class="num chg ${v>=0?"pos":"neg"}">${pct(Math.abs(v),2)}</td>`;
-  const vol=v=>v>=1e9?fmt(v/1e9,2)+" Mr":v>=1e6?fmt(v/1e6,1)+" Mn":fmt(v/1e3,0)+" bin";
-  $("mTable").innerHTML=`<table><thead><tr><th class="num">#</th>${th("s","Coin")}${th("c","Fiyat","num")}${th("h1","1s %","num")}${th("d","24s %","num")}<th class="num hide-sm">24s aralık</th>${th("q","Hacim (24s)","num hide-sm")}<th></th></tr></thead><tbody>${
+  const vol=v=>v>=1e12?fmt(v/1e12,2)+" Tn":v>=1e9?fmt(v/1e9,2)+" Mr":v>=1e6?fmt(v/1e6,1)+" Mn":fmt(v/1e3,0)+" bin";
+  $("mTable").innerHTML=`<table><thead><tr><th class="num">#</th>${th("s","Coin")}${th("c","Fiyat","num")}${th("h1","1s %","num")}${th("d","24s %","num")}<th class="num hide-sm">24s aralık</th>${th("m","Piyasa değeri","num hide-sm")}${th("q","Hacim (24s)","num hide-sm")}<th></th></tr></thead><tbody>${
     rows.map((r,i)=>{const b=r.s.replace(/USDT$/,"");return `<tr><td class="num small">${i+1}</td>
-      <td class="cn"><span class="av" style="background:${avc(b)}">${b.slice(0,3)}</span><b>${NAMES[b]||b}</b><span>${b}</span></td>
+      <td class="cn"><span class="av" style="background:${avc(b)}">${b.slice(0,3)}</span><b>${NAMES[b]||mkt.cap.get(r.s)?.name||b}</b><span>${b}</span></td>
       <td class="num px ${r.c>r.prev?"up":r.c<r.prev?"dn":""}">$${pfmt(r.c)}</td>${c(r.h1)}${c(r.c/r.o-1)}
-      <td class="num small hide-sm">${pfmt(r.l)} – ${pfmt(r.h)}</td><td class="num hide-sm">$${vol(r.q)}</td>
-      <td><button class="simbtn" data-s="${r.s}">Simüle et</button></td></tr>`}).join("")||'<tr><td colspan="8" class="small">Sonuç yok.</td></tr>'}</tbody></table>`;
+      <td class="num small hide-sm">${pfmt(r.l)} – ${pfmt(r.h)}</td><td class="num hide-sm">${mkt.cap.get(r.s)?"$"+vol(mkt.cap.get(r.s).cap):"—"}</td><td class="num hide-sm">$${vol(r.q)}</td>
+      <td><button class="simbtn" data-s="${r.s}">Simüle et</button></td></tr>`}).join("")||'<tr><td colspan="9" class="small">Sonuç yok.</td></tr>'}</tbody></table>`;
 }
 function mtAct(e){const h=e.target.closest("th[data-k]");if(h){const k=h.dataset.k;mt.dir=mt.sort===k?-mt.dir:(k==="s"?1:-1);mt.sort=k;mt.last=0;mtRender();return}
   const b=e.target.closest(".simbtn");if(b){const sym=b.dataset.s,sel=$("liveSym");if(![...sel.options].some(o=>o.value===sym))sel.add(new Option(sym,sym));
