@@ -1,0 +1,1 @@
+{"name": "Mavi Pusula", "short_name": "Pusula", "start_url": ".", "display": "standalone", "background_color": "#06080d", "theme_color": "#06080d", "icons": [{"src": "icon.svg", "sizes": "any", "type": "image/svg+xml"}]}
