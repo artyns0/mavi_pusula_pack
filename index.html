@@ -210,6 +210,12 @@ td.px.up{color:var(--good)}td.px.dn{color:var(--bad)}
 .tprow span:nth-child(4){color:var(--faint);font-weight:500}
 @keyframes tpin{from{background:rgba(111,182,255,.22)}to{background:transparent}}
 @media (prefers-reduced-motion:reduce){.tprow{animation:none}}
+.botfeed{max-height:520px;overflow-y:auto}
+.fe.scan .fi{color:var(--blue2)}
+.fe.scan .ft{color:var(--muted)}
+.prow{cursor:pointer}
+.prow:hover td{background:rgba(61,139,255,.06)}
+#posTable td{padding:10px}
 </style>
 
 <div class="app">
@@ -286,13 +292,14 @@ td.px.up{color:var(--good)}td.px.dn{color:var(--bad)}
         <div class="small" id="chartNote" style="margin-top:8px"></div>
       </section>
 
-      <section class="col" style="gap:12px">
-        <div style="display:flex;justify-content:space-between;align-items:baseline"><h2>Botun sanal işlemleri</h2><button class="btn ghost" data-goto="islemler">Tümü</button></div>
-        <div class="tx" id="txList"></div>
-      </section>
       <section class="card">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px"><h2>Canlı akış</h2><span class="small">en yeni üstte</span></div>
-        <ul class="feed" id="feed"></ul>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:10px"><h2>Açık pozisyonlar <span class="small" style="font-weight:500">· saniyelik</span></h2><span class="small" id="posCount"></span></div>
+        <div class="tablewrap" id="posTable"></div>
+      </section>
+
+      <section class="col" style="gap:12px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline"><h2>Son kapanan işlemler</h2><button class="btn ghost" data-goto="islemler">Tümü</button></div>
+        <div class="tx" id="txList"></div>
       </section>
 
     </div>
@@ -304,13 +311,10 @@ td.px.up{color:var(--good)}td.px.dn{color:var(--bad)}
         <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><span class="small" id="tkChg">24 saat —</span><span class="small" id="tkHL"></span></div>
         <div class="small" id="tkTime" style="color:var(--faint)"></div>
       </section>
-      <section class="card tape">
-        <div style="display:flex;justify-content:space-between;align-items:baseline"><h2>Canlı alım-satım</h2><span class="small" id="tpSym">BTCUSDT</span></div>
-        <div class="small" style="margin:2px 0 10px">Piyasadaki gerçek işlemler. Botun sanal işlemleri değil.</div>
-        <div class="press"><div class="pb" id="tpBuy"></div></div>
-        <div style="display:flex;justify-content:space-between" class="small"><span class="pos" id="tpBuyT">Alım —</span><span class="neg" id="tpSellT">Satım —</span></div>
-        <div class="tphead"><span>Fiyat</span><span>Miktar</span><span>Tutar</span><span>Saat</span></div>
-        <div class="tplist" id="tpList"><div class="small" style="padding:8px 0">İşlemler bekleniyor…</div></div>
+      <section class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px"><h2>Bot akışı</h2>
+          <div class="seg" id="feedSeg" role="group" aria-label="Akış filtresi"><button data-f="all" aria-pressed="true">Tümü</button><button data-f="trades" aria-pressed="false">Alım-satım</button><button data-f="nos" aria-pressed="false">Kararlar</button></div></div>
+        <ul class="feed botfeed" id="feed"></ul>
       </section>
       <section class="card best">
         <div class="top2">
@@ -674,9 +678,9 @@ function renderBase(){
     :(mode==="live"?'<div class="note">Canlı hesapta henüz işlem yok. Bot her mum kapanışında uygun bir sinyal arıyor; ilk işlem gelince burada görünür.</div>':'<div class="note">Henüz işlem yok. Grafiğin altındaki <b>Oynat</b>\'a bas.</div>');
   if(view==="islemler"){
     $("tTrades").innerHTML=`<table><thead><tr><th>Açılış</th><th>Kapanış</th><th>Yön</th><th>Setup</th><th class="num">Giriş</th><th class="num">Çıkış</th><th>Neden</th><th class="num">PnL (USDT)</th></tr></thead><tbody>${
-      S.trades.slice(-300).reverse().map(t=>`<tr><td>${dt(t.open)}</td><td>${dt(t.close)}</td><td><span class="tag ${t.dir}">${t.dir}</span></td><td>${t.setup}</td><td class="num">${fmt(t.entry)}</td><td class="num">${fmt(t.exit)}</td><td>${t.why}</td><td class="num ${t.pnl>=0?'pos':'neg'}">${fmt(t.pnl)}</td></tr>`).join("")||'<tr><td colspan="8" class="small">Henüz işlem yok.</td></tr>'}</tbody></table>`;
+      S.trades.slice(-300).reverse().map(t=>`<tr><td>${dt(t.open)}</td><td>${dt(t.close)}</td><td><span class="tag ${t.dir}">${t.dir}</span></td><td>${t.sym?base(t.sym)+" · ":""}${t.setup}</td><td class="num">${pfmt(t.entry)}</td><td class="num">${pfmt(t.exit)}</td><td>${t.why}</td><td class="num ${t.pnl>=0?'pos':'neg'}">${fmt(t.pnl)}</td></tr>`).join("")||'<tr><td colspan="8" class="small">Henüz işlem yok.</td></tr>'}</tbody></table>`;
     $("tDecisions").innerHTML=`<table><thead><tr><th>Zaman (UTC)</th><th>Rejim</th><th>Yön</th><th>Setup</th><th class="num">Kalite</th><th class="num">Olasılık</th><th>Risk kararı</th></tr></thead><tbody>${
-      S.decisions.slice(-200).reverse().map(d=>`<tr><td>${dt(d.t)}</td><td>${d.regime}</td><td><span class="tag ${d.direction}">${d.direction}</span></td><td>${d.setup}</td><td class="num">${d.q}/3</td><td class="num">${pct(d.p,0)}</td><td>${d.verdict==="onaylandı"?'<span class="tag ok">onaylandı</span>':d.verdict}</td></tr>`).join("")||'<tr><td colspan="7" class="small">Henüz karar yok.</td></tr>'}</tbody></table>`;
+      S.decisions.slice(-200).reverse().map(d=>`<tr><td>${dt(d.t)}</td><td>${d.regime}</td><td><span class="tag ${d.direction}">${d.direction}</span></td><td>${d.sym?base(d.sym)+" · ":""}${d.setup}</td><td class="num">${d.q}/3</td><td class="num">${pct(d.p,0)}</td><td>${d.verdict==="onaylandı"?'<span class="tag ok">onaylandı</span>':d.verdict}</td></tr>`).join("")||'<tr><td colspan="7" class="small">Henüz karar yok.</td></tr>'}</tbody></table>`;
   }
   if(view==="inceleme") renderReview();
   if(view==="panel"){(mode==="live"?drawLive:drawMain)()}
@@ -724,14 +728,18 @@ Object.keys(SETUPS).forEach(k=>$("su-"+k).onchange=e=>{settings.setups[k]=e.targ
 
 window.addEventListener("resize",()=>render());
 // açılış: örnek veriyle bir kısmı çalışmış halde
-// ---------- CANLI MOD (sadece herkese açık piyasa verisi; API anahtarı yok, emir yok) ----------
+// ---------- CANLI MOD (sadece herkese açık piyasa verisi; API anahtarı yok, gerçek emir yok) ----------
 const REST_HOSTS=["https://data-api.binance.vision","https://api.binance.com"];
 const WS_HOSTS=["wss://data-stream.binance.vision","wss://stream.binance.com:9443"];
 const IV_MS={"1m":60e3,"5m":300e3,"15m":900e3,"1h":3600e3};
 const IV_TR={"1m":"1 dk","5m":"5 dk","15m":"15 dk","1h":"1 saat"};
+// grafikte gösterilen coin
 const live={sym:store.get("mp.sym","BTCUSDT"),iv:store.get("mp.iv","5m"),price:null,chg:null,hi:null,lo:null,tickT:null,
-  forming:null,ws:null,wsOk:false,wsHost:0,retry:1000,poll:null,events:[],ready:false};
-let mode="live",S_live=null,S_test=null;
+  forming:null,ws:null,wsOk:false,wsHost:0,retry:1000,poll:null,ready:false};
+let mode="live",S_live=null,S_test=null,P=null,feedFilter="all";
+const hhmm=t=>new Date(t).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"});
+const hhmmss=t=>new Date(t).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+const base=s=>s.replace(/USDT$/,"");
 
 async function klines(sym,iv,limit){
   let err;for(const h of REST_HOSTS){try{
@@ -739,150 +747,176 @@ async function klines(sym,iv,limit){
     if(!r.ok) throw new Error("HTTP "+r.status);
     const now=Date.now();return (await r.json()).filter(k=>k[6]<now).map(k=>({t:k[0],o:+k[1],h:+k[2],l:+k[3],c:+k[4],v:+k[5]}));
   }catch(e){err=e}}throw err}
-const saveKey=()=>`mp.live.${live.sym}.${live.iv}`;
-function saveLive(){if(!S_live)return;const s={...S_live,eq:S_live.eq.slice(-3000),decisions:S_live.decisions.slice(-500)};
-  store.set(saveKey(),{S:s,lastT:D.length?D[Math.min(S_live.i,D.length)-1]?.t:null,events:live.events.slice(0,100)})}
-function ev(type,text,t=Date.now()){live.events.unshift({type,text,t});live.events.length=Math.min(live.events.length,100)}
-function withLive(fn){const keep=S;S=S_live;try{return fn()}finally{S=keep}}
 
-// Kapanan bir mumu canlı hesapta işle ve olayları yaz
-function liveProcessNext(catchUp){
-  return withLive(()=>{const b={n:S.trades.length,pos:S.pos,killed:S.killed,nd:S.decisions.length};const bar=D[S.i];
-    if(!step())return false;
-    if(!b.pos&&S.pos) ev("open",`İşlem açıldı: ${S.pos.setup} ${S.pos.dir==="long"?"long":"short"} @ ${fmt(S.pos.entry)} · stop ${fmt(S.pos.stop)} · hedef ${fmt(S.pos.target)}`,bar.t);
-    S.trades.slice(b.n).forEach(t=>ev(t.pnl>=0?"win":"loss",`İşlem kapandı (${t.why}): ${t.setup} ${t.dir} · ${t.pnl>=0?"+":""}${fmt(t.pnl)} USDT`,bar.t));
-    if(!b.killed&&S.killed) ev("kill",`Kill switch: ${S.killReason}`,bar.t);
-    const d=S.decisions[S.decisions.length-1],nd=S.decisions.length>b.nd;
-    const verdict=S.pos?"pozisyon açık, yeni karar yok":(nd?d.verdict:"karar flat");
-    if(nd&&d.verdict==="onaylandı") ev("signal",`Sinyal: ${d.setup} ${d.direction} (olasılık ${pct(d.p,0)}). Sonraki mumun açılışında girilecek.`,bar.t);
-    else ev("candle",`${IV_TR[live.iv]} mum kapandı @ ${fmt(bar.c)} · ${verdict}${catchUp?" (kaçırılan mum)":""}`,bar.t+IV_MS[live.iv]);
-    return true})}
+// ================= SANAL PORTFÖY BOTU (20 coin, ortak risk) =================
+const UNIVERSE=["BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT","BNBUSDT","DOGEUSDT","ADAUSDT","SUIUSDT","LINKUSDT","AVAXUSDT",
+  "TRXUSDT","LTCUSDT","DOTUSDT","BCHUSDT","NEARUSDT","APTUSDT","ARBUSDT","OPUSDT","PEPEUSDT","WIFUSDT"];
+const MAX_OPEN=5;
+const port={iv:live.iv,syms:[],series:{},px:{},ws:null,wsOk:false,host:0,retry:1000,ready:false,events:[],batch:null,poll:null,lastClose:null};
+function newPort(){return Object.assign(newState(),{positions:{},pendings:{},lastT:{},startT:Date.now(),scans:0})}
+const portKey=()=>`mp.port.${port.iv}`;
+function savePort(){if(!P)return;store.set(portKey(),{P:{...P,trades:P.trades.slice(-500),decisions:P.decisions.slice(-500),eq:P.eq.slice(-3000)},events:port.events.slice(0,150)})}
+function ev(type,text,t=Date.now()){port.events.unshift({type,text,t});port.events.length=Math.min(port.events.length,150)}
+const pxOf=s=>port.px[s]??(typeof mkt!=="undefined"&&mkt.map.get(s)?.c)??port.series[s]?.D.at(-1)?.c;
+function portEquity(){let e=P.cash;for(const p of Object.values(P.positions)){const px=pxOf(p.sym);if(px)e+=(p.dir==="long"?1:-1)*p.qty*(px-p.entry)}return e}
+function upnl(p){const px=pxOf(p.sym);return px?(p.dir==="long"?1:-1)*p.qty*(px-p.entry):0}
+function closeP(sym,price,t,why){const p=P.positions[sym];if(!p)return;const s=p.dir==="long"?1:-1,px=price*(1-s*COSTS.slip);
+  const pnl=s*p.qty*(px-p.entry)-Math.abs(p.qty*px)*COSTS.fee;P.cash+=pnl;delete P.positions[sym];
+  P.trades.push({sym,open:p.t,close:t,dir:p.dir,setup:p.setup,regime:p.regime,entry:p.entry,exit:px,pnl,win:pnl>0?1:0,p:p.p,why});
+  ev(pnl>=0?"win":"loss",`SATIŞ · ${base(sym)} ${p.dir==="long"?"long kapandı":"short kapandı"} (${why}) @ ${pfmt(px)} · ${pnl>=0?"+":""}${fmt(pnl)} USDT`,t)}
+function portRisk(t){
+  const L=limits(),eq=portEquity();P.peak=Math.max(P.peak,eq);
+  const dk=new Date(t).toISOString().slice(0,10);if(dk!==P.dayKey){P.dayKey=dk;P.dayStart=eq}
+  const dd=eq/P.peak-1;P.maxDD=Math.min(P.maxDD,dd);
+  if(dd<=-L.maxDD&&!P.killed){P.killed=true;P.killReason=`Max drawdown aşıldı (${pct(dd)})`;ev("kill","KILL SWITCH: "+P.killReason+". Tüm pozisyonlar kapatılıyor.",t)}
+  if(P.killed)for(const s of Object.keys(P.positions))closeP(s,pxOf(s),t,"kill switch");
+  return eq}
+// Bir coinin kapanan mumunu işle: bekleyen girişi doldur, pozisyonu yönet, yeni karar ver
+function processBar(sym,i,quiet){
+  const ser=port.series[sym],bar=ser.D[i],f=ser.F[i],L=limits(),res={sym,verdict:null,dec:null};
+  const pd=P.pendings[sym];
+  if(pd){delete P.pendings[sym];
+    if(!P.killed&&!P.positions[sym]&&Object.keys(P.positions).length<MAX_OPEN){
+      const s=pd.dec.direction==="long"?1:-1,eq=portEquity(),frac=sizeFrac(pd.dec.p,pd.dec.b,L,pd.scale);
+      const expo=Object.values(P.positions).reduce((a,p)=>a+p.qty*p.entry,0);
+      if(frac>0&&expo+frac*eq<=eq){const entry=bar.o*(1+s*COSTS.slip),qty=frac*eq/entry;P.cash-=qty*entry*COSTS.fee;
+        P.positions[sym]={sym,dir:pd.dec.direction,entry,qty,stop:entry*(1-s*pd.k),target:entry*(1+s*pd.k*pd.dec.b),t:bar.t,held:0,setup:pd.dec.setup,p:pd.dec.p,regime:pd.dec.regime};
+        const p=P.positions[sym];ev("open",`ALIM · ${base(sym)} ${p.dir} @ ${pfmt(entry)} · ${fmt(qty*entry,0)} USDT (%${Math.round(frac*100)}) · stop ${pfmt(p.stop)} · hedef ${pfmt(p.target)}`,bar.t)}
+      else if(!quiet)ev("info",`${base(sym)} sinyali boyut sınırına takıldı, girilmedi.`,bar.t)}}
+  const p=P.positions[sym];
+  if(p){p.held++;const hs=p.dir==="long"?bar.l<=p.stop:bar.h>=p.stop,ht=p.dir==="long"?bar.h>=p.target:bar.l<=p.target,tc=bar.t+IV_MS[port.iv];
+    if(hs)closeP(sym,p.stop,tc,"stop");else if(ht)closeP(sym,p.target,tc,"hedef");else if(p.held>=HOLD)closeP(sym,bar.c,tc,"süre doldu")}
+  if(!P.positions[sym]&&!P.pendings[sym]){
+    const dec=decide(f);let v;const eq=portEquity();
+    if(P.killed)v="KILL SWITCH";else if(eq/P.dayStart-1<=-L.maxDay)v="günlük kayıp limiti";
+    else if(dec.direction==="flat")v="karar flat";else if(!settings.setups[dec.setup])v="setup kapalı";
+    else if(dec.toxic)v="toksik akış";else if(dec.q<MIN_Q)v="setup kalitesi düşük";
+    else if(Object.keys(P.positions).length+Object.keys(P.pendings).length>=MAX_OPEN)v="max açık pozisyon";else v="onaylandı";
+    if(dec.direction!=="flat")P.decisions.push({t:bar.t,sym,...dec,setup:dec.setup,verdict:v});
+    if(v==="onaylandı"){const vol=isFinite(f.vol)?f.vol:0.01;P.pendings[sym]={dec,scale:dec.risk_state==="reduced"?.5:1,k:Math.max(0.004,2*vol*Math.sqrt(6))};
+      ev("signal",`SİNYAL · ${base(sym)} ${dec.direction} · ${dec.setup} · olasılık %${Math.round(dec.p*100)} · sonraki mum açılışında girilecek`,bar.t+IV_MS[port.iv])}
+    res.verdict=v;res.dec=dec}
+  P.lastT[sym]=bar.t;return res}
+// Aynı anda kapanan mumları tek "tarama" olarak özetle
+function batchAdd(r,t){if(!port.batch){port.batch={t,n:0,dirs:0,blocked:0};setTimeout(batchFlush,1500)}
+  const b=port.batch;b.n++;if(r.dec&&r.dec.direction!=="flat")b.dirs++;if(r.verdict&&r.verdict!=="onaylandı"&&r.verdict!=="karar flat")b.blocked++}
+function batchFlush(){const b=port.batch;port.batch=null;if(!b)return;P.scans++;
+  const eq=portRisk(b.t);P.eq.push({t:b.t,eq,c:null});
+  ev("scan",`TARAMA · ${b.n} coin tarandı · ${b.dirs} aday · ${b.blocked} risk filtresine takıldı · açık ${Object.keys(P.positions).length}/${MAX_OPEN}`,b.t);
+  savePort();render()}
+function onPortClose(sym,k){
+  const ser=port.series[sym];if(!ser)return;const t=k.t,last=ser.D.at(-1).t;if(t<=last)return;
+  if(t!==last+IV_MS[port.iv]){portPollOne(sym);return}
+  ser.D.push({t,o:+k.o,h:+k.h,l:+k.l,c:+k.c,v:+k.v});if(ser.D.length>400)ser.D.splice(0,ser.D.length-400);ser.F=features(ser.D);
+  port.lastClose=t+IV_MS[port.iv];batchAdd(processBar(sym,ser.D.length-1),t+IV_MS[port.iv])}
+async function portPollOne(sym){try{const rows=await klines(sym,port.iv,30),ser=port.series[sym];let add=false;
+  for(const r of rows)if(r.t>ser.D.at(-1).t){ser.D.push(r);add=true}
+  if(add){ser.F=features(ser.D);for(let i=ser.D.findIndex(r=>r.t>(P.lastT[sym]??0));i>=0&&i<ser.D.length;i++)batchAdd(processBar(sym,i),ser.D[i].t+IV_MS[port.iv])}}catch{}}
+// Her saniye: stop ve hedefi canlı fiyatla kontrol et
+function liveStops(){if(!P||!port.ready)return;const t=Date.now();let changed=false;
+  for(const p of Object.values(P.positions)){const px=pxOf(p.sym);if(!px)continue;
+    if(p.dir==="long"?px<=p.stop:px>=p.stop){closeP(p.sym,px,t,"stop (canlı)");changed=true}
+    else if(p.dir==="long"?px>=p.target:px<=p.target){closeP(p.sym,px,t,"hedef (canlı)");changed=true}}
+  if(changed){portRisk(t);savePort();render()}}
+setInterval(liveStops,1000);
 
+async function portStart(){
+  portStop();port.iv=live.iv;port.ready=false;port.events=[];
+  const saved=store.get(portKey(),null);
+  P=saved?Object.assign(newPort(),saved.P):newPort();if(saved)port.events=saved.events||[];
+  port.syms=[...new Set([...UNIVERSE,...Object.keys(P.positions),...Object.keys(P.pendings)])];
+  const got=await Promise.allSettled(port.syms.map(s=>klines(s,port.iv,300)));
+  port.series={};port.syms=port.syms.filter((s,i)=>{if(got[i].status!=="fulfilled"||got[i].value.length<120)return false;
+    const D=got[i].value;port.series[s]={D,F:features(D)};return true});
+  if(!port.syms.length){ev("info","Piyasa verisi alınamadı. Bağlantıyı kontrol et.");render();return}
+  if(saved){let missed=0;
+    for(const s of port.syms){const ser=port.series[s],lt=P.lastT[s];if(!lt)continue;
+      for(let i=ser.D.findIndex(r=>r.t>lt);i>=0&&i<ser.D.length;i++){processBar(s,i,true);missed++}}
+    portRisk(Date.now());ev("info",`Bot kaldığı yerden devam ediyor${missed?` · sayfa kapalıyken kapanan ${missed} mum işlendi`:""}.`)}
+  else{ev("info",`Sanal portföy 10.000 USDT ile başladı · ${port.syms.length} coin · ${IV_TR[port.iv]} mumlar · en fazla ${MAX_OPEN} açık pozisyon.`);
+    // ilk tarama: son kapanan mum üzerinde karar
+    for(const s of port.syms)batchAdd(processBar(s,port.series[s].D.length-1),Date.now())}
+  for(const s of port.syms)if(!P.lastT[s])P.lastT[s]=port.series[s].D.at(-1).t;
+  S_live=P;if(mode==="live")S=P;port.ready=true;port.lastClose=port.series[port.syms[0]].D.at(-1).t+IV_MS[port.iv];
+  portConnect();port.poll=setInterval(()=>{if(!port.wsOk)port.syms.forEach(portPollOne)},60000);savePort();render()}
+function portStop(){clearInterval(port.poll);if(port.ws){port.ws.onclose=null;try{port.ws.close()}catch{}}port.ws=null;port.wsOk=false}
+function portConnect(){
+  const url=`${WS_HOSTS[port.host]}/stream?streams=`+port.syms.map(s=>s.toLowerCase()+"@kline_"+port.iv).join("/");
+  let ws;try{ws=new WebSocket(url)}catch{return portRetry()}port.ws=ws;
+  ws.onopen=()=>{port.wsOk=true;port.retry=1000;ev("info",`Bot ${port.syms.length} coinin canlı mum akışına bağlandı.`);render()};
+  ws.onmessage=m=>{let d;try{d=JSON.parse(m.data).data}catch{return}if(!d||d.e!=="kline")return;
+    port.px[d.s]=+d.k.c;if(d.k.x)onPortClose(d.s,d.k)};
+  ws.onclose=()=>{port.wsOk=false;portRetry()};ws.onerror=()=>{try{ws.close()}catch{}}}
+function portRetry(){port.host=(port.host+1)%WS_HOSTS.length;const w=port.retry;port.retry=Math.min(30000,w*2);setTimeout(()=>{if(!port.wsOk&&port.syms.length)portConnect()},w)}
+
+// ================= GRAFİK COİNİ (sadece görüntü + geçmiş testi) =================
 async function liveStart(){
-  if(typeof tape!=="undefined"){tape.rows=[];tape.win=[];tape.buf=[]}
-  stopStreams();live.ready=false;live.events=[];live.forming=null;$("csvErr").hidden=true;
-  $("srcChip").textContent="Bağlanıyor…";
-  try{
-    const rows=await klines(live.sym,live.iv,1000);
-    load(rows,"",true);src={label:"",real:true};
-    // geçmiş testi: aynı veride, ayrı hesap
-    S_test=newState();S=S_test;while(step());
-    // canlı hesap: kayıt varsa kaldığı yerden, yoksa şimdiden başlar
-    const saved=store.get(saveKey(),null);
-    if(saved&&saved.lastT&&saved.lastT>=D[0].t){
-      S_live=Object.assign(newState(),saved.S);live.events=saved.events||[];
-      let i=D.findIndex(r=>r.t>saved.lastT);S_live.i=i<0?D.length:i;
-      const missed=D.length-S_live.i;if(missed>0)ev("info",`Sayfa kapalıyken kapanan ${missed} mum işleniyor.`);
-      while(S_live.i<D.length)liveProcessNext(true);
-      ev("info","Canlı hesap kaldığı yerden devam ediyor.");
-    }else{S_live=newState();S_live.i=D.length;
-      if(saved)ev("info","Kayıt çok eskiydi, canlı hesap yeniden başlatıldı.");
-      ev("info",`Canlı sanal hesap 10.000 USDT ile başladı · ${live.sym} · ${IV_TR[live.iv]} mumlar.`)}
-    S=mode==="live"?S_live:S_test;live.price=D[D.length-1].c;live.ready=true;saveLive();
-    connectWS();live.poll=setInterval(restPoll,60000);render();
-  }catch(e){
-    $("csvErr").textContent="Canlı veri alınamadı ("+e.message+"). Bağlantını kontrol edip Canlıya bağlan'a tekrar bas.";$("csvErr").hidden=false;
-    $("srcChip").textContent="Bağlantı yok";
-  }
-}
-function stopStreams(){clearInterval(live.poll);if(live.ws){live.ws.onclose=null;try{live.ws.close()}catch{}}live.ws=null;live.wsOk=false}
-function onClosedBar(k){
-  const t=k.t;if(!D.length||t<=D[D.length-1].t)return;
-  if(t!==D[D.length-1].t+IV_MS[live.iv]){restPoll();return} // boşluk varsa REST ile doldur
-  D.push({t,o:+k.o,h:+k.h,l:+k.l,c:+k.c,v:+k.v});F=features(D);
-  liveProcessNext(false);
-  const keep=S;S=S_test;while(step());S=keep; // geçmiş testi de güncel kalsın
-  saveLive();render();
-}
+  stopStreams();live.ready=false;live.forming=null;$("csvErr").hidden=true;
+  try{const rows=await klines(live.sym,live.iv,1000);load(rows,"",true);src={label:"",real:true};
+    S_test=newState();S=S_test;while(step());S=mode==="live"&&P?P:S_test;
+    live.price=D.at(-1).c;live.ready=true;connectWS();render()}
+  catch(e){$("csvErr").textContent="Canlı veri alınamadı ("+e.message+"). Bağlantını kontrol edip Yeniden bağlan'a bas.";$("csvErr").hidden=false;$("srcChip").textContent="Bağlantı yok"}}
+function stopStreams(){if(live.ws){live.ws.onclose=null;try{live.ws.close()}catch{}}live.ws=null;live.wsOk=false}
 function connectWS(){
-  const s=live.sym.toLowerCase(),url=`${WS_HOSTS[live.wsHost]}/stream?streams=${s}@miniTicker/${s}@kline_${live.iv}/${s}@aggTrade`;
-  let ws;try{ws=new WebSocket(url)}catch{return scheduleRetry()}
-  live.ws=ws;
-  ws.onopen=()=>{live.wsOk=true;live.retry=1000;ev("info","Canlı fiyat akışına bağlandı.");renderLive()};
+  const s=live.sym.toLowerCase(),url=`${WS_HOSTS[live.wsHost]}/stream?streams=${s}@miniTicker/${s}@kline_${live.iv}`;
+  let ws;try{ws=new WebSocket(url)}catch{return scheduleRetry()}live.ws=ws;
+  ws.onopen=()=>{live.wsOk=true;live.retry=1000;renderLive()};
   ws.onmessage=m=>{let d;try{d=JSON.parse(m.data).data}catch{return}if(!d)return;
     if(d.e==="24hrMiniTicker"){live.price=+d.c;live.chg=+d.c/+d.o-1;live.hi=+d.h;live.lo=+d.l;live.tickT=d.E;tick()}
-    else if(d.e==="aggTrade"){tapePush(d)}
     else if(d.e==="kline"){const k=d.k;live.forming=k.x?null:{t:k.t,o:+k.o,h:+k.h,l:+k.l,c:+k.c};live.price=+k.c;live.tickT=d.E;
-      if(k.x)onClosedBar(k);else tick()}};
-  ws.onclose=()=>{live.wsOk=false;renderLive();scheduleRetry()};
-  ws.onerror=()=>{try{ws.close()}catch{}};
-}
+      if(k.x&&k.t>D.at(-1).t){D.push({t:k.t,o:+k.o,h:+k.h,l:+k.l,c:+k.c,v:+k.v});F=features(D);const keep=S;S=S_test;while(step());S=keep}tick()}};
+  ws.onclose=()=>{live.wsOk=false;renderLive();scheduleRetry()};ws.onerror=()=>{try{ws.close()}catch{}}}
 function scheduleRetry(){live.wsHost=(live.wsHost+1)%WS_HOSTS.length;const w=live.retry;live.retry=Math.min(30000,live.retry*2);setTimeout(()=>{if(!live.wsOk&&live.ready)connectWS()},w)}
-async function restPoll(){
-  try{const rows=await klines(live.sym,live.iv,50);let added=0;
-    for(const r of rows){if(r.t>D[D.length-1].t){D.push(r);added++}}
-    if(added){F=features(D);while(S_live.i<D.length)liveProcessNext(added>1);const keep=S;S=S_test;while(step());S=keep;saveLive();render()}
-    if(!live.wsOk&&rows.length)live.price=rows[rows.length-1].c;
-  }catch{}
-}
 let lastTickDraw=0;
 function tick(){const now=performance.now();if(now-lastTickDraw<700)return;lastTickDraw=now;renderLive();if(mode==="live"&&view==="panel")drawLive()}
 
-// ---------- canlı görünüm ----------
-const hhmm=t=>new Date(t).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"});
-const hhmmss=t=>new Date(t).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-function liveEquity(){if(!S_live)return START;return live.price&&S_live.pos?equityAt(S_live,live.price):(S_live.eq.length?S_live.eq[S_live.eq.length-1].eq:S_live.cash)}
-function equityAt(st,px){const p=st.pos;if(!p)return st.cash;return st.cash+(p.dir==="long"?1:-1)*p.qty*(px-p.entry)}
+// ================= CANLI GÖRÜNÜM =================
+const EVI={open:"↗",win:"✓",loss:"✕",kill:"■",signal:"◆",scan:"⟳",info:"i"};
 function renderLive(){
-  // fiyat kartı (her iki modda)
   $("tkSym").textContent=live.sym;
-  $("tkPx").textContent=live.price?fmt(live.price,live.price>100?2:4):"—";
+  $("tkPx").textContent=live.price?pfmt(live.price):"—";
   $("tkChg").textContent=live.chg==null?"24 saat —":`24 saat ${live.chg>=0?"+":""}${pct(live.chg,2)}`;$("tkChg").className="small "+(live.chg>=0?"pos":"neg");
-  $("tkHL").textContent=live.hi?`Yüksek ${fmt(live.hi,0)} · Düşük ${fmt(live.lo,0)}`:"";
+  $("tkHL").textContent=live.hi?`Yüksek ${pfmt(live.hi)} · Düşük ${pfmt(live.lo)}`:"";
   $("tkTime").textContent=live.tickT?"son fiyat "+hhmmss(live.tickT):"";
   $("tkDot").className="dot"+(live.wsOk?" pulse":" idle");
-  $("srcChip").textContent=live.ready?`${live.sym} · ${IV_TR[live.iv]} · ${live.wsOk?"canlı":"yeniden bağlanıyor"}`:$("srcChip").textContent;
-  $("srcChip").style.color=live.wsOk?"var(--blue2)":"";
-  // akış
-  const ic={open:"↗",win:"✓",loss:"✕",kill:"■",signal:"◆",candle:"•",info:"i"};
-  $("feed").innerHTML=live.events.slice(0,9).map(e=>`<li class="fe ${e.type}"><span class="fi">${ic[e.type]||"•"}</span><span class="ft">${e.text}</span><span class="fd">${hhmm(e.t)}</span></li>`).join("")||'<li class="fe info"><span class="ft small">Bağlanıyor…</span></li>';
-  if(mode!=="live"||!S_live)return;
-  const eq=liveEquity(),d=eq-START;
+  $("srcChip").textContent=`Grafik: ${base(live.sym)} · ${IV_TR[live.iv]}`;
+  // bot akışı
+  const evs=port.events.filter(e=>feedFilter==="all"||(feedFilter==="trades"?["open","win","loss","kill"].includes(e.type):e.type!=="scan"));
+  $("feed").innerHTML=evs.slice(0,40).map(e=>`<li class="fe ${e.type}"><span class="fi">${EVI[e.type]||"•"}</span><span class="ft">${e.text}</span><span class="fd">${hhmmss(e.t)}</span></li>`).join("")||'<li class="fe info"><span class="ft small">Bot başlatılıyor…</span></li>';
+  if(!P)return;
+  // açık pozisyonlar (saniyelik)
+  const pos=Object.values(P.positions).sort((a,b)=>b.t-a.t),pend=Object.entries(P.pendings);
+  $("posCount").textContent=`${pos.length}/${MAX_OPEN} açık${pend.length?` · ${pend.length} giriş bekliyor`:""}`;
+  $("posTable").innerHTML=pos.length||pend.length?`<table><thead><tr><th>Coin</th><th>Yön</th><th class="num">Giriş</th><th class="num">Anlık fiyat</th><th class="num">K/Z (USDT)</th><th class="num">K/Z %</th><th class="num hide-sm">Stop</th><th class="num hide-sm">Hedef</th><th class="num hide-sm">Süre</th></tr></thead><tbody>${
+    pos.map(p=>{const u=upnl(p),px=pxOf(p.sym),r=(p.dir==="long"?1:-1)*(px/p.entry-1),mins=Math.max(0,Math.floor((Date.now()-p.t)/60000));
+      return `<tr class="prow" data-s="${p.sym}"><td><b>${base(p.sym)}</b> <span class="small">${p.setup}</span></td><td><span class="tag ${p.dir}">${p.dir}</span></td><td class="num">${pfmt(p.entry)}</td><td class="num"><b>${pfmt(px)}</b></td><td class="num ${u>=0?"pos":"neg"}"><b>${u>=0?"+":""}${fmt(u)}</b></td><td class="num ${r>=0?"pos":"neg"}">${r>=0?"+":""}${pct(r,2)}</td><td class="num hide-sm neg">${pfmt(p.stop)}</td><td class="num hide-sm pos">${pfmt(p.target)}</td><td class="num hide-sm">${mins<60?mins+" dk":Math.floor(mins/60)+" sa "+mins%60+" dk"}</td></tr>`}).join("")
+    }${pend.map(([s,d])=>`<tr><td><b>${base(s)}</b> <span class="small">${d.dec.setup}</span></td><td><span class="tag ${d.dec.direction}">${d.dec.direction}</span></td><td colspan="7" class="small">Sinyal onaylandı, sonraki mum açılışında girilecek</td></tr>`).join("")}</tbody></table>`
+    :'<div class="note">Şu an açık pozisyon yok. Bot her mum kapanışında 20 coini tarıyor; uygun sinyal gelince alım burada saniyelik kâr/zararıyla görünür.</div>';
+  if(mode!=="live")return;
+  const eq=portEquity(),d=eq-START;
   $("sEq").textContent=fmt(eq,0);
+  $("sN").textContent=P.trades.length;$("sNl").textContent=P.trades.length?`Kapanan işlem · %${Math.round(mean(P.trades.map(t=>t.win))*100)} kazanma`:"Kapanan işlem";
   $("bigPnl").textContent=(d>=0?"+":"")+fmt(d)+" USDT";$("bigPnl").className="big "+(d>=0?"":"neg");
-  $("bigLabel").textContent="Canlı sanal hesap · kâr / zarar";
-  $("runDot").className="dot"+(S_live.killed?" off":live.wsOk?" pulse":" idle");
-  $("runText").textContent=S_live.killed?"Kill switch":live.wsOk?"Canlı · paper":"Bağlantı bekleniyor";
-  const p=S_live.pos,next=(live.forming?live.forming.t:(D.length?D[D.length-1].t+IV_MS[live.iv]:Date.now()))+IV_MS[live.iv];
-  const left=Math.max(0,next-Date.now()),mm=Math.floor(left/60000),ss=Math.floor(left%60000/1000);
-  const upnl=p&&live.price?equityAt(S_live,live.price)-S_live.cash:null;
-  $("liveInfo").innerHTML=`<span class="li"><span class="k">Sonraki karar</span><b>${String(mm).padStart(2,"0")}:${String(ss).padStart(2,"0")}</b></span>
-    <span class="li"><span class="k">Mum</span><b>${IV_TR[live.iv]}</b></span>
-    ${p?`<span class="li"><span class="k">Açık pozisyon</span><b class="${p.dir==="long"?"pos":"neg"}">${p.dir} · ${p.setup}</b></span>
-      <span class="li"><span class="k">Giriş / stop / hedef</span><b>${fmt(p.entry,0)} / ${fmt(p.stop,0)} / ${fmt(p.target,0)}</b></span>
-      <span class="li"><span class="k">Anlık K/Z</span><b class="${upnl>=0?"pos":"neg"}">${upnl>=0?"+":""}${fmt(upnl)}</b></span>`
-      :`<span class="li"><span class="k">Açık pozisyon</span><b>yok</b></span>`}
-    <span class="li"><span class="k">Başlangıç</span><b>${S_live.eq.length?new Date(S_live.eq[0].t).toLocaleDateString("tr-TR",{day:"numeric",month:"short"}):"şimdi"}</b></span>`;
-  const tl=$("txList");tl.querySelector("#openRow")?.remove();
-  if(p){if(!S_live.trades.length)tl.innerHTML="";
-    tl.insertAdjacentHTML("afterbegin",`<div class="txrow" id="openRow" style="border-color:rgba(111,182,255,.35)">
-    <div class="coin ${p.dir}">${p.dir==="long"?"↑":"↓"}</div>
-    <div style="min-width:0"><div class="k">Açık pozisyon</div><div class="v">${p.setup}</div></div>
-    <div class="hide-sm"><div class="k">Giriş</div><div class="v">${fmt(p.entry,0)}</div></div>
-    <div class="hide-sm"><div class="k">Anlık fiyat</div><div class="v">${fmt(live.price,0)}</div></div>
-    <div class="hide-sm"><div class="k">Stop / hedef</div><div class="v">${fmt(p.stop,0)} / ${fmt(p.target,0)}</div></div>
-    <span class="status ${upnl>=0?"win":"loss"}">AÇIK ${upnl>=0?"+":""}${fmt(upnl)}</span></div>`)}
+  $("bigLabel").textContent="Sanal portföy · kâr / zarar (anlık)";
+  $("runDot").className="dot"+(P.killed?" off":port.wsOk?" pulse":" idle");
+  $("runText").textContent=P.killed?"Kill switch":port.wsOk?`Bot canlı · ${port.syms.length} coin`:"Bot bağlanıyor";
+  const next=(port.lastClose||Date.now())+IV_MS[port.iv],left=Math.max(0,next-Date.now()),mm=Math.floor(left/60000),ss=Math.floor(left%60000/1000);
+  $("liveInfo").innerHTML=`<span class="li"><span class="k">Sonraki tarama</span><b>${String(mm).padStart(2,"0")}:${String(ss).padStart(2,"0")}</b></span>
+    <span class="li"><span class="k">Taranan</span><b>${port.syms.length} coin · ${IV_TR[port.iv]}</b></span>
+    <span class="li"><span class="k">Tarama sayısı</span><b>${P.scans}</b></span>
+    <span class="li"><span class="k">Açık K/Z</span><b class="${eq-P.cash>=0?"pos":"neg"}">${eq-P.cash>=0?"+":""}${fmt(eq-P.cash)}</b></span>
+    <span class="li"><span class="k">Başlangıç</span><b>${new Date(P.startT).toLocaleString("tr-TR",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</b></span>`;
+  const rec=P.trades.slice(-5).reverse();
+  $("txList").innerHTML=rec.length?rec.map(t=>`<div class="txrow">
+    <div class="coin ${t.dir}">${t.dir==="long"?"↑":"↓"}</div>
+    <div style="min-width:0"><div class="k">${t.setup}</div><div class="v">${base(t.sym)} ${t.dir}</div></div>
+    <div class="hide-sm"><div class="k">Alış</div><div class="v">${pfmt(t.entry)}</div></div>
+    <div class="hide-sm"><div class="k">Satış (${t.why})</div><div class="v">${pfmt(t.exit)}</div></div>
+    <div class="hide-sm"><div class="k">Saat</div><div class="v">${hhmmss(t.close)}</div></div>
+    <span class="status ${t.pnl>=0?"win":"loss"}">${t.pnl>=0?"+":""}${fmt(t.pnl)}</span></div>`).join("")
+    :'<div class="note">Henüz kapanan işlem yok.</div>';
 }
-setInterval(()=>{if(mode==="live")renderLive()},1000);
-// ---------- CANLI ALIM-SATIM AKIŞI (piyasadaki gerçek işlemler, sadece izleme) ----------
-const tape={buf:[],rows:[],win:[]};
-function tapePush(d){tape.buf.push({p:+d.p,q:+d.q,t:d.T,sell:d.m})}
-function tapeFlush(){
-  const now=Date.now();
-  if(tape.buf.length){tape.win.push(...tape.buf);tape.rows=tape.buf.reverse().concat(tape.rows).slice(0,28);tape.buf=[]}
-  tape.win=tape.win.filter(x=>now-x.t<60000);
-  $("tpSym").textContent=live.sym+" · son 60 sn";
-  let b=0,sl=0;for(const x of tape.win){const v=x.p*x.q;if(x.sell)sl+=v;else b+=v}
-  const tot=b+sl;$("tpBuy").style.width=(tot?100*b/tot:50)+"%";
-  const usd=v=>v>=1e6?"$"+fmt(v/1e6,2)+" Mn":v>=1e3?"$"+fmt(v/1e3,1)+" bin":"$"+fmt(v,0);
-  $("tpBuyT").textContent=tot?`Alım ${usd(b)} · %${Math.round(100*b/tot)}`:"Alım —";
-  $("tpSellT").textContent=tot?`Satım ${usd(sl)} · %${Math.round(100*sl/tot)}`:"Satım —";
-  if(!tape.rows.length)return;
-  const fresh=tape.rows.filter(x=>!x.shown);fresh.forEach(x=>x.shown=true);
-  const big=tape.rows.length?Math.max(50000,0):50000;
-  $("tpList").innerHTML=tape.rows.map(x=>{const v=x.p*x.q;return `<div class="tprow ${x.sell?"s":"b"}${v>=big?" big":""}"${fresh.includes(x)?"":' style="animation:none"'}><span>${pfmt(x.p)}</span><span>${x.q<1?x.q.toFixed(4):fmt(x.q,2)}</span><span>${usd(v)}</span><span>${new Date(x.t).toLocaleTimeString("tr-TR")}</span></div>`}).join("");
-}
-setInterval(tapeFlush,300);
+setInterval(()=>renderLive(),1000);
 
 // ---------- PİYASA ŞERİDİ: tüm USDT paritelerinin saniyelik fiyatı (herkese açık akış) ----------
 const mkt={map:new Map(),shown:[],ws:null,ok:false,host:0,retry:1000,built:0};
@@ -962,7 +996,7 @@ function drawLive(){
   const [g,w,h]=setupCanvas(cv),pad={l:62,r:78,t:16,b:26};
   const N=Math.min(120,D.length),bars=D.slice(-N).map(b=>({t:b.t,c:b.c}));
   if(live.forming)bars.push({t:live.forming.t,c:live.price??live.forming.c});else if(live.price)bars.push({t:D[D.length-1].t+IV_MS[live.iv],c:live.price});
-  const p=S_live&&S_live.pos;const vals=bars.map(b=>b.c);if(p)vals.push(p.stop,p.target,p.entry);
+  const p=P&&P.positions[live.sym];const vals=bars.map(b=>b.c);if(p)vals.push(p.stop,p.target,p.entry);
   let lo=Math.min(...vals),hi=Math.max(...vals);const m=(hi-lo)*.08||1;lo-=m;hi+=m;
   const M=bars.length,X=i=>pad.l+(w-pad.l-pad.r)*i/(M-1),Y=v=>pad.t+(h-pad.t-pad.b)*(1-(v-lo)/(hi-lo));
   g.font="600 11px "+C("--font");g.fillStyle=C("--faint");g.strokeStyle=C("--line");g.lineWidth=1;
@@ -974,18 +1008,18 @@ function drawLive(){
     g.strokeStyle=c;g.globalAlpha=.6;g.setLineDash([5,5]);g.beginPath();g.moveTo(pad.l,y);g.lineTo(w-pad.r,y);g.stroke();g.setLineDash([]);g.globalAlpha=1;
     g.fillStyle=c;g.font="700 11px "+C("--font");g.fillText(`${l} ${fmt(v,0)}`,w-pad.r+6,y+4)});g.font="600 11px "+C("--font")}
   // fiyat çizgisi
-  const P=bars.map((b,i)=>[X(i),Y(b.c)]);
-  smoothPath(g,P);g.lineTo(X(M-1),h-pad.b);g.lineTo(X(0),h-pad.b);g.closePath();
+  const PT=bars.map((b,i)=>[X(i),Y(b.c)]);
+  smoothPath(g,PT);g.lineTo(X(M-1),h-pad.b);g.lineTo(X(0),h-pad.b);g.closePath();
   const grd=g.createLinearGradient(0,pad.t,0,h-pad.b);grd.addColorStop(0,"rgba(61,139,255,.26)");grd.addColorStop(1,"rgba(61,139,255,0)");g.fillStyle=grd;g.fill();
-  smoothPath(g,P);const lg=g.createLinearGradient(pad.l,0,w,0);lg.addColorStop(0,"#2f6df6");lg.addColorStop(1,"#8fd0ff");
+  smoothPath(g,PT);const lg=g.createLinearGradient(pad.l,0,w,0);lg.addColorStop(0,"#2f6df6");lg.addColorStop(1,"#8fd0ff");
   g.strokeStyle=lg;g.lineWidth=2.6;g.shadowColor=C("--glow");g.shadowBlur=12;g.stroke();g.shadowBlur=0;
   // canlı hesabın işlemleri
-  if(S_live){const t0=bars[0].t,span=IV_MS[live.iv];
-    S_live.trades.concat(p?[{open:p.t,dir:p.dir,openOnly:true}]:[]).forEach(tr=>{if(tr.open<t0)return;const i=Math.round((tr.open-t0)/span);if(i<0||i>=M)return;
+  if(P){const t0=bars[0].t,span=IV_MS[live.iv];
+    P.trades.filter(t=>t.sym===live.sym).concat(p?[{open:p.t,dir:p.dir,openOnly:true}]:[]).forEach(tr=>{if(tr.open<t0)return;const i=Math.round((tr.open-t0)/span);if(i<0||i>=M)return;
       const x=X(i),y=Y(bars[i].c);g.fillStyle=tr.dir==="long"?C("--good"):C("--bad");g.beginPath();
       if(tr.dir==="long"){g.moveTo(x,y+8);g.lineTo(x-5,y+16);g.lineTo(x+5,y+16)}else{g.moveTo(x,y-8);g.lineTo(x-5,y-16);g.lineTo(x+5,y-16)}g.fill()})}
   // canlı nokta + fiyat etiketi
-  const [lx,ly]=P[M-1],pulse=(Date.now()%1600)/1600;
+  const [lx,ly]=PT[M-1],pulse=(Date.now()%1600)/1600;
   g.beginPath();g.arc(lx,ly,5+pulse*10,0,7);g.fillStyle=`rgba(143,208,255,${.35*(1-pulse)})`;g.fill();
   g.beginPath();g.arc(lx,ly,4.5,0,7);g.fillStyle="#8fd0ff";g.fill();
   const txt=fmt(bars[M-1].c,bars[M-1].c>100?2:4);g.font="700 12px "+C("--font");const tw=g.measureText(txt).width+16;
@@ -994,27 +1028,30 @@ function drawLive(){
 }
 
 // ---------- mod ve kontroller ----------
-function setMode(m){mode=m;setPlaying(false);S=m==="live"?S_live||S:S_test||S;
+function setMode(m){mode=m;setPlaying(false);S=m==="live"?P||S:S_test||S;
   document.querySelectorAll("#modeSeg button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.mode===m));
   $("liveRow").hidden=m!=="live";$("playRow").hidden=m==="live";$("legendBox").hidden=m==="live";
-  $("bigLabel").textContent=m==="live"?"Canlı sanal hesap · kâr / zarar":"Geçmiş testi · son 1000 mum · kâr / zarar";
-  $("chartNote").textContent=m==="live"?"Son 120 mum ve anlık fiyat. Oklar canlı hesabın işlemleri.":"Geçmiş testi: aynı strateji son 1000 mum üzerinde. Canlı hesabı etkilemez.";
+  $("bigLabel").textContent=m==="live"?"Sanal portföy · kâr / zarar (anlık)":"Geçmiş testi · son 1000 mum · kâr / zarar";
+  $("chartNote").textContent=m==="live"?"Grafikte seçili coin: son 120 mum ve anlık fiyat. Oklar botun bu coindeki alımları. Açık pozisyona tıklayınca grafik o coine geçer.":"Geçmiş testi: aynı strateji son 1000 mum üzerinde. Canlı hesabı etkilemez.";
   render()}
 document.querySelectorAll("#modeSeg button").forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
 $("liveSym").value=live.sym;$("liveIv").value=live.iv;
 $("liveSym").onchange=e=>{live.sym=e.target.value;store.set("mp.sym",live.sym);liveStart()};
-$("liveIv").onchange=e=>{live.iv=e.target.value;store.set("mp.iv",live.iv);liveStart()};
-$("btnLive").onclick=()=>{setMode("live");liveStart()};
+$("liveIv").onchange=e=>{live.iv=e.target.value;store.set("mp.iv",live.iv);liveStart();portStart()};
+$("btnLive").onclick=()=>{setMode("live");liveStart();if(!port.wsOk)portStart()};
 let resetArm=0;
 $("btnLiveReset").onclick=e=>{const b=e.currentTarget;
   if(Date.now()-resetArm>4000){resetArm=Date.now();b.textContent="Emin misin? Tekrar bas";setTimeout(()=>b.textContent="Canlı hesabı sıfırla",4000);return}
-  resetArm=0;b.textContent="Canlı hesabı sıfırla";S_live=newState();S_live.i=D.length;live.events=[];ev("info","Canlı hesap sıfırlandı, 10.000 USDT ile yeniden başladı.");if(mode==="live")S=S_live;saveLive();render()};
+  resetArm=0;b.textContent="Canlı hesabı sıfırla";P=newPort();for(const s of port.syms)P.lastT[s]=port.series[s].D.at(-1).t;S_live=P;port.events=[];ev("info","Sanal portföy sıfırlandı, 10.000 USDT ile yeniden başladı.");if(mode==="live")S=P;savePort();render()};
 // CSV/örnek veri: geçmiş testi moduna geçer, canlı hesap arka planda kalır
 $("csv").onchange=e=>{const file=e.target.files[0];if(!file)return;const rd=new FileReader();
   rd.onload=()=>{try{const rows=parseCSV(rd.result);stopStreams();live.ready=false;mode="test";load(rows,`${file.name} · ${rows.length} mum`,true);S_test=S;setMode("test")}
     catch(err){$("csvErr").textContent="Dosya okunamadı: "+err.message;$("csvErr").hidden=false}};rd.readAsText(file);e.target.value=""};
 // kill switch ve sıfırlama canlı hesabı kaydetsin
-["btnKill","btnUnkill"].forEach(id=>{const f=$(id).onclick;$(id).onclick=e=>{f(e);if(mode==="live"){S_live=S;saveLive();if(id==="btnKill")ev("kill","Kill switch elle çekildi.");render()}}});
-S=newState();setMode("live");liveStart();
+["btnKill","btnUnkill"].forEach(id=>{const f=$(id).onclick;$(id).onclick=e=>{const keep=S;if(P)S=P;f(e);S=keep;if(P){if(id==="btnKill"){ev("kill","KILL SWITCH elle çekildi. Tüm pozisyonlar kapatılıyor.");for(const s of Object.keys(P.positions))closeP(s,pxOf(s),Date.now(),"kill switch");P.pendings={}}else ev("info","Kill switch kaldırıldı, bot yeniden işlem açabilir.");savePort();render()}}});
+S=newState();setMode("live");liveStart();portStart();
+document.querySelectorAll("#feedSeg button").forEach(b=>b.onclick=()=>{feedFilter=b.dataset.f;document.querySelectorAll("#feedSeg button").forEach(x=>x.setAttribute("aria-pressed",x===b));renderLive()});
+$("posTable").addEventListener("pointerdown",e=>{const r=e.target.closest(".prow");if(!r)return;const sym=r.dataset.s,sel=$("liveSym");
+  if(![...sel.options].some(o=>o.value===sym))sel.add(new Option(sym,sym));sel.value=sym;live.sym=sym;store.set("mp.sym",sym);liveStart()});
 </script>
 </body></html>
