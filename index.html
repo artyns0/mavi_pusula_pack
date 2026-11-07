@@ -198,6 +198,18 @@ td.px.up{color:var(--good)}td.px.dn{color:var(--bad)}
 .simbtn{font:inherit;font-size:12px;font-weight:700;padding:4px 11px;border-radius:999px;border:1px solid rgba(111,182,255,.45);background:none;color:var(--blue2);cursor:pointer}
 .simbtn:hover{background:rgba(61,139,255,.12)}
 @media (max-width:700px){.mt .hide-sm{display:none}}
+.press{height:8px;border-radius:8px;background:rgba(255,107,122,.55);overflow:hidden;margin-bottom:4px}
+.pb{height:100%;width:50%;background:var(--good);transition:width .4s}
+.tphead,.tprow{display:grid;grid-template-columns:1.2fr 1fr 1fr .9fr;gap:6px;font-size:12px}
+.tphead{color:var(--faint);margin-top:10px;padding-bottom:4px;border-bottom:1px solid var(--line)}
+.tphead span:not(:first-child),.tprow span:not(:first-child){text-align:right}
+.tplist{display:grid;max-height:330px;overflow:hidden}
+.tprow{padding:3px 0;font-weight:600;animation:tpin .6s ease-out}
+.tprow.b span:first-child{color:var(--good)}.tprow.s span:first-child{color:var(--bad)}
+.tprow.big{background:rgba(61,139,255,.10);border-radius:4px}
+.tprow span:nth-child(4){color:var(--faint);font-weight:500}
+@keyframes tpin{from{background:rgba(111,182,255,.22)}to{background:transparent}}
+@media (prefers-reduced-motion:reduce){.tprow{animation:none}}
 </style>
 
 <div class="app">
@@ -275,7 +287,7 @@ td.px.up{color:var(--good)}td.px.dn{color:var(--bad)}
       </section>
 
       <section class="col" style="gap:12px">
-        <div style="display:flex;justify-content:space-between;align-items:baseline"><h2>Son işlemler</h2><button class="btn ghost" data-goto="islemler">Tümü</button></div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline"><h2>Botun sanal işlemleri</h2><button class="btn ghost" data-goto="islemler">Tümü</button></div>
         <div class="tx" id="txList"></div>
       </section>
       <section class="card">
@@ -291,6 +303,14 @@ td.px.up{color:var(--good)}td.px.dn{color:var(--bad)}
         <div class="big" id="tkPx" style="font-size:30px">—</div>
         <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><span class="small" id="tkChg">24 saat —</span><span class="small" id="tkHL"></span></div>
         <div class="small" id="tkTime" style="color:var(--faint)"></div>
+      </section>
+      <section class="card tape">
+        <div style="display:flex;justify-content:space-between;align-items:baseline"><h2>Canlı alım-satım</h2><span class="small" id="tpSym">BTCUSDT</span></div>
+        <div class="small" style="margin:2px 0 10px">Piyasadaki gerçek işlemler. Botun sanal işlemleri değil.</div>
+        <div class="press"><div class="pb" id="tpBuy"></div></div>
+        <div style="display:flex;justify-content:space-between" class="small"><span class="pos" id="tpBuyT">Alım —</span><span class="neg" id="tpSellT">Satım —</span></div>
+        <div class="tphead"><span>Fiyat</span><span>Miktar</span><span>Tutar</span><span>Saat</span></div>
+        <div class="tplist" id="tpList"><div class="small" style="padding:8px 0">İşlemler bekleniyor…</div></div>
       </section>
       <section class="card best">
         <div class="top2">
@@ -739,6 +759,7 @@ function liveProcessNext(catchUp){
     return true})}
 
 async function liveStart(){
+  if(typeof tape!=="undefined"){tape.rows=[];tape.win=[];tape.buf=[]}
   stopStreams();live.ready=false;live.events=[];live.forming=null;$("csvErr").hidden=true;
   $("srcChip").textContent="Bağlanıyor…";
   try{
@@ -774,12 +795,13 @@ function onClosedBar(k){
   saveLive();render();
 }
 function connectWS(){
-  const s=live.sym.toLowerCase(),url=`${WS_HOSTS[live.wsHost]}/stream?streams=${s}@miniTicker/${s}@kline_${live.iv}`;
+  const s=live.sym.toLowerCase(),url=`${WS_HOSTS[live.wsHost]}/stream?streams=${s}@miniTicker/${s}@kline_${live.iv}/${s}@aggTrade`;
   let ws;try{ws=new WebSocket(url)}catch{return scheduleRetry()}
   live.ws=ws;
   ws.onopen=()=>{live.wsOk=true;live.retry=1000;ev("info","Canlı fiyat akışına bağlandı.");renderLive()};
   ws.onmessage=m=>{let d;try{d=JSON.parse(m.data).data}catch{return}if(!d)return;
     if(d.e==="24hrMiniTicker"){live.price=+d.c;live.chg=+d.c/+d.o-1;live.hi=+d.h;live.lo=+d.l;live.tickT=d.E;tick()}
+    else if(d.e==="aggTrade"){tapePush(d)}
     else if(d.e==="kline"){const k=d.k;live.forming=k.x?null:{t:k.t,o:+k.o,h:+k.h,l:+k.l,c:+k.c};live.price=+k.c;live.tickT=d.E;
       if(k.x)onClosedBar(k);else tick()}};
   ws.onclose=()=>{live.wsOk=false;renderLive();scheduleRetry()};
@@ -842,6 +864,26 @@ function renderLive(){
     <span class="status ${upnl>=0?"win":"loss"}">AÇIK ${upnl>=0?"+":""}${fmt(upnl)}</span></div>`)}
 }
 setInterval(()=>{if(mode==="live")renderLive()},1000);
+// ---------- CANLI ALIM-SATIM AKIŞI (piyasadaki gerçek işlemler, sadece izleme) ----------
+const tape={buf:[],rows:[],win:[]};
+function tapePush(d){tape.buf.push({p:+d.p,q:+d.q,t:d.T,sell:d.m})}
+function tapeFlush(){
+  const now=Date.now();
+  if(tape.buf.length){tape.win.push(...tape.buf);tape.rows=tape.buf.reverse().concat(tape.rows).slice(0,28);tape.buf=[]}
+  tape.win=tape.win.filter(x=>now-x.t<60000);
+  $("tpSym").textContent=live.sym+" · son 60 sn";
+  let b=0,sl=0;for(const x of tape.win){const v=x.p*x.q;if(x.sell)sl+=v;else b+=v}
+  const tot=b+sl;$("tpBuy").style.width=(tot?100*b/tot:50)+"%";
+  const usd=v=>v>=1e6?"$"+fmt(v/1e6,2)+" Mn":v>=1e3?"$"+fmt(v/1e3,1)+" bin":"$"+fmt(v,0);
+  $("tpBuyT").textContent=tot?`Alım ${usd(b)} · %${Math.round(100*b/tot)}`:"Alım —";
+  $("tpSellT").textContent=tot?`Satım ${usd(sl)} · %${Math.round(100*sl/tot)}`:"Satım —";
+  if(!tape.rows.length)return;
+  const fresh=tape.rows.filter(x=>!x.shown);fresh.forEach(x=>x.shown=true);
+  const big=tape.rows.length?Math.max(50000,0):50000;
+  $("tpList").innerHTML=tape.rows.map(x=>{const v=x.p*x.q;return `<div class="tprow ${x.sell?"s":"b"}${v>=big?" big":""}"${fresh.includes(x)?"":' style="animation:none"'}><span>${pfmt(x.p)}</span><span>${x.q<1?x.q.toFixed(4):fmt(x.q,2)}</span><span>${usd(v)}</span><span>${new Date(x.t).toLocaleTimeString("tr-TR")}</span></div>`}).join("");
+}
+setInterval(tapeFlush,300);
+
 // ---------- PİYASA ŞERİDİ: tüm USDT paritelerinin saniyelik fiyatı (herkese açık akış) ----------
 const mkt={map:new Map(),shown:[],ws:null,ok:false,host:0,retry:1000,built:0};
 const STABLE=/^(USDC|FDUSD|TUSD|BUSD|USDP|DAI|EUR|AEUR|EURI|PAXG|USD1|XUSD|BFUSD|USDE)USDT$/;
@@ -897,7 +939,7 @@ function mtRender(){
   $("mMore").hidden=total<=mt.limit;
   const th=(k,l,cls="")=>`<th class="${cls}${mt.sort===k?" sorted":""}" data-k="${k}">${l}${mt.sort===k?(mt.dir<0?" ↓":" ↑"):""}</th>`;
   const c=v=>v==null||!isFinite(v)?'<td class="num small">—</td>':`<td class="num chg ${v>=0?"pos":"neg"}">${pct(Math.abs(v),2)}</td>`;
-  const vol=v=>v>=1e9?fmt(v/1e9,2)+" Mr":v>=1e6?fmt(v/1e6,1)+" Mn":fmt(v/1e3,0)+" B";
+  const vol=v=>v>=1e9?fmt(v/1e9,2)+" Mr":v>=1e6?fmt(v/1e6,1)+" Mn":fmt(v/1e3,0)+" bin";
   $("mTable").innerHTML=`<table><thead><tr><th class="num">#</th>${th("s","Coin")}${th("c","Fiyat","num")}${th("h1","1s %","num")}${th("d","24s %","num")}<th class="num hide-sm">24s aralık</th>${th("q","Hacim (24s)","num hide-sm")}<th></th></tr></thead><tbody>${
     rows.map((r,i)=>{const b=r.s.replace(/USDT$/,"");return `<tr><td class="num small">${i+1}</td>
       <td class="cn"><span class="av" style="background:${avc(b)}">${b.slice(0,3)}</span><b>${NAMES[b]||b}</b><span>${b}</span></td>
