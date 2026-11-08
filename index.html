@@ -216,6 +216,13 @@ td.px.up{color:var(--good)}td.px.dn{color:var(--bad)}
 .prow{cursor:pointer}
 .prow:hover td{background:rgba(61,139,255,.06)}
 #posTable td{padding:10px}
+.sumgrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.sg{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);padding:12px 14px;min-width:0}
+.sg .k{font-size:11.5px;color:var(--muted)}.sg b{display:block;font-size:19px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sg .s{font-size:12px;color:var(--muted);margin-top:2px}
+.sumrow{display:flex;gap:8px 22px;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--muted)}.sumrow b{color:var(--ink)}
+.reportbox{width:100%;margin-top:12px;min-height:180px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:var(--r-md);padding:10px;font:12px/1.5 ui-monospace,monospace}
+@media (max-width:720px){.sumgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 
 <div class="app">
@@ -290,6 +297,14 @@ td.px.up{color:var(--good)}td.px.dn{color:var(--bad)}
         </div>
         <div class="liverow" id="liveRow"><div class="liveinfo" id="liveInfo"></div><button class="btn ghost" id="btnLiveReset">Canlı hesabı sıfırla</button></div>
         <div class="small" id="chartNote" style="margin-top:8px"></div>
+      </section>
+
+      <section class="card" id="sumCard">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px"><h2>Bot özeti <span class="small" style="font-weight:500" id="sumSince"></span></h2>
+          <button class="btn ghost" id="btnReport">Raporu kopyala</button></div>
+        <div class="sumgrid" id="sumGrid"></div>
+        <div class="sumrow" id="sumMore"></div>
+        <textarea id="reportBox" class="reportbox" readonly hidden aria-label="Rapor metni"></textarea>
       </section>
 
       <section class="card">
@@ -773,7 +788,7 @@ function portEquity(){let e=P.cash;for(const p of Object.values(P.positions)){co
 function upnl(p){const px=pxOf(p.sym);return px?(p.dir==="long"?1:-1)*p.qty*(px-p.entry):0}
 function closeP(sym,price,t,why){const p=P.positions[sym];if(!p)return;const s=p.dir==="long"?1:-1,px=price*(1-s*COSTS.slip);
   const pnl=s*p.qty*(px-p.entry)-Math.abs(p.qty*px)*COSTS.fee;P.cash+=pnl;delete P.positions[sym];
-  P.trades.push({sym,open:p.t,close:t,dir:p.dir,setup:p.setup,regime:p.regime,entry:p.entry,exit:px,pnl,win:pnl>0?1:0,p:p.p,why});
+  P.trades.push({sym,qty:p.qty,fee:(p.fee0??p.qty*p.entry*COSTS.fee)+Math.abs(p.qty*px)*COSTS.fee,open:p.t,close:t,dir:p.dir,setup:p.setup,regime:p.regime,entry:p.entry,exit:px,pnl,win:pnl>0?1:0,p:p.p,why});
   ev(pnl>=0?"win":"loss",`SATIŞ · ${base(sym)} ${p.dir==="long"?"long kapandı":"short kapandı"} (${why}) @ ${pfmt(px)} · ${pnl>=0?"+":""}${fmt(pnl)} USDT`,t)}
 function portRisk(t){
   const L=limits(),eq=portEquity();P.peak=Math.max(P.peak,eq);
@@ -791,7 +806,7 @@ function processBar(sym,i,quiet){
       const s=pd.dec.direction==="long"?1:-1,eq=portEquity(),frac=sizeFrac(pd.dec.p,pd.dec.b,L,pd.scale);
       const expo=Object.values(P.positions).reduce((a,p)=>a+p.qty*p.entry,0);
       if(frac>0&&expo+frac*eq<=eq){const entry=bar.o*(1+s*COSTS.slip),qty=frac*eq/entry;P.cash-=qty*entry*COSTS.fee;
-        P.positions[sym]={sym,dir:pd.dec.direction,entry,qty,stop:entry*(1-s*pd.k),target:entry*(1+s*pd.k*pd.dec.b),t:bar.t,held:0,setup:pd.dec.setup,p:pd.dec.p,regime:pd.dec.regime};
+        P.positions[sym]={sym,fee0:qty*entry*COSTS.fee,dir:pd.dec.direction,entry,qty,stop:entry*(1-s*pd.k),target:entry*(1+s*pd.k*pd.dec.b),t:bar.t,held:0,setup:pd.dec.setup,p:pd.dec.p,regime:pd.dec.regime};
         const p=P.positions[sym];ev("open",`ALIM · ${base(sym)} ${p.dir} @ ${pfmt(entry)} · ${fmt(qty*entry,0)} USDT (%${Math.round(frac*100)}) · stop ${pfmt(p.stop)} · hedef ${pfmt(p.target)}`,bar.t)}
       else if(!quiet)ev("info",`${base(sym)} sinyali boyut sınırına takıldı, girilmedi.`,bar.t)}}
   const p=P.positions[sym];
@@ -947,6 +962,64 @@ function renderLive(){
     :'<div class="note">Henüz kapanan işlem yok.</div>';
 }
 setInterval(()=>renderLive(),1000);
+
+// ---------- BOT ÖZETİ (ne kadar parayla ne kadar işlem) ----------
+// Eski kayıtlarda miktar yoksa kâr/zarar formülünden geri hesaplanır.
+function tQty(t){if(t.qty)return t.qty;const s=t.dir==="long"?1:-1,d=s*(t.exit-t.entry)-t.exit*COSTS.fee;return Math.abs(d)>1e-12?Math.abs(t.pnl/d):0}
+function dur(ms){const m=Math.floor(ms/60000),d=Math.floor(m/1440),h=Math.floor(m%1440/60);return d?`${d} gün ${h} sa`:h?`${h} sa ${m%60} dk`:`${m} dk`}
+function botSummary(){
+  const T=P.trades,eq=portEquity(),open=Object.values(P.positions);
+  const notIn=T.reduce((a,t)=>a+tQty(t)*t.entry,0),notOut=T.reduce((a,t)=>a+tQty(t)*t.exit,0),openN=open.reduce((a,p)=>a+p.qty*p.entry,0);
+  const fees=T.reduce((a,t)=>a+(t.fee??tQty(t)*(t.entry+t.exit)*COSTS.fee),0)+open.reduce((a,p)=>a+(p.fee0??p.qty*p.entry*COSTS.fee),0);
+  const wins=T.filter(t=>t.pnl>0),loss=T.filter(t=>t.pnl<=0),real=T.reduce((a,t)=>a+t.pnl,0);
+  const why={};for(const t of T){const w=t.why.replace(" (canlı)","");why[w]=(why[w]||0)+1}
+  const bySym={};for(const t of T){const b=bySym[t.sym]??={n:0,pnl:0};b.n++;b.pnl+=t.pnl}
+  const syms=Object.entries(bySym).sort((a,b)=>b[1].n-a[1].n||b[1].pnl-a[1].pnl);
+  const best=T.reduce((a,t)=>!a||t.pnl>a.pnl?t:a,null),worst=T.reduce((a,t)=>!a||t.pnl<a.pnl?t:a,null);
+  const sizes=T.map(t=>tQty(t)*t.entry);
+  return {eq,start:START,ret:eq/START-1,run:Date.now()-P.startT,scans:P.scans,opened:T.length+open.length,closed:T.length,open:open.length,
+    wins:wins.length,losses:loss.length,wr:T.length?wins.length/T.length:null,real,unreal:eq-P.cash,fees,vol:notIn+notOut+openN,avg:sizes.length?mean(sizes):null,
+    maxSize:sizes.length?Math.max(...sizes):null,avgW:wins.length?mean(wins.map(t=>t.pnl)):null,avgL:loss.length?mean(loss.map(t=>t.pnl)):null,
+    maxDD:P.maxDD,killed:P.killed,why,syms,best,worst,coins:port.syms.length,iv:port.iv}}
+function renderSummary(){
+  if(!P||mode!=="live"){$("sumCard").hidden=true;return}$("sumCard").hidden=false;
+  const m=botSummary(),sg=(k,v,sub="",cls="")=>`<div class="sg"><div class="k">${k}</div><b class="${cls}">${v}</b>${sub?`<div class="s">${sub}</div>`:""}</div>`,sgn=v=>(v>=0?"+":"")+fmt(v);
+  $("sumSince").textContent=`· ${dur(m.run)} çalıştı`;
+  $("sumGrid").innerHTML=
+    sg("Başlangıç → şimdi",`${fmt(m.eq,0)} USDT`,`10.000 ile başladı · ${m.ret>=0?"+":""}${pct(m.ret,2)}`,m.ret>=0?"pos":"neg")+
+    sg("Açılan işlem",m.opened,`${m.closed} kapandı · ${m.open} açık`)+
+    sg("Kazanan / kaybeden",`${m.wins} / ${m.losses}`,m.wr==null?"henüz kapanan yok":`kazanma oranı %${Math.round(m.wr*100)}`)+
+    sg("Toplam işlem hacmi",`${fmt(m.vol,0)} USDT`,m.avg?`ortalama işlem ${fmt(m.avg,0)} USDT`:"alım + satım tutarı")+
+    sg("Gerçekleşen K/Z",`${sgn(m.real)} USDT`,"kapanan işlemlerden",m.real>=0?"pos":"neg")+
+    sg("Açık K/Z",`${sgn(m.unreal)} USDT`,"anlık, açık pozisyonlar",m.unreal>=0?"pos":"neg")+
+    sg("Ödenen komisyon (tahmini)",`${fmt(m.fees)} USDT`,"işlem başına %0,1")+
+    sg("En büyük düşüş",pct(m.maxDD,2),m.killed?"kill switch tetiklendi":"limit %"+Math.round(limits().maxDD*100),"neg");
+  const why=Object.entries(m.why).map(([k,v])=>`${k} ${v}`).join(" · ")||"—";
+  $("sumMore").innerHTML=`<span>Kapanış nedeni: <b>${why}</b></span>
+    <span>En iyi: <b class="pos">${m.best?base(m.best.sym)+" "+sgn(m.best.pnl):"—"}</b></span>
+    <span>En kötü: <b class="neg">${m.worst?base(m.worst.sym)+" "+sgn(m.worst.pnl):"—"}</b></span>
+    <span>En çok işlem: <b>${m.syms.slice(0,3).map(([s,b])=>`${base(s)} ${b.n}`).join(", ")||"—"}</b></span>
+    <span>Tarama: <b>${m.scans}</b> · <b>${m.coins}</b> coin</span>`}
+function reportText(){const m=botSummary(),sgn=v=>(v>=0?"+":"")+v.toFixed(2);
+  const L=[`Mavi Pusula bot raporu · ${new Date().toLocaleString("tr-TR")}`,
+  `Çalışma: ${dur(m.run)} (başlangıç ${new Date(P.startT).toLocaleString("tr-TR")}) · ${m.iv} mumlar · ${m.coins} coin · ${m.scans} tarama`,
+  `Bakiye: 10000 -> ${m.eq.toFixed(2)} USDT (${(m.ret*100).toFixed(2)}%)`,
+  `İşlem: ${m.opened} açıldı, ${m.closed} kapandı, ${m.open} açık · kazanan ${m.wins} / kaybeden ${m.losses}${m.wr==null?"":` (%${Math.round(m.wr*100)})`}`,
+  `Hacim: ${m.vol.toFixed(0)} USDT · ort. işlem ${m.avg?m.avg.toFixed(0):"-"} · en büyük ${m.maxSize?m.maxSize.toFixed(0):"-"} USDT`,
+  `K/Z: gerçekleşen ${sgn(m.real)} · açık ${sgn(m.unreal)} · komisyon ~${m.fees.toFixed(2)} · ort. kazanç ${m.avgW?sgn(m.avgW):"-"} · ort. kayıp ${m.avgL?sgn(m.avgL):"-"}`,
+  `Max düşüş: ${(m.maxDD*100).toFixed(2)}%${m.killed?" · KILL SWITCH: "+P.killReason:""}`,
+  `Kapanış nedenleri: ${Object.entries(m.why).map(([k,v])=>k+" "+v).join(", ")||"-"}`,
+  `Coin bazında: ${m.syms.slice(0,15).map(([s,b])=>`${base(s)} ${b.n} işlem ${sgn(b.pnl)}`).join("; ")||"-"}`,
+  `Setup bazında: ${Object.entries(P.trades.reduce((a,t)=>{const b=a[t.setup]??={n:0,w:0,p:0};b.n++;b.w+=t.pnl>0;b.p+=t.pnl;return a},{})).map(([k,b])=>`${k} ${b.n} işlem %${Math.round(100*b.w/b.n)} ${sgn(b.p)}`).join("; ")||"-"}`,
+  `Sinyal kararları: ${Object.entries(P.decisions.reduce((a,d)=>{a[d.verdict]=(a[d.verdict]||0)+1;return a},{})).map(([k,v])=>k+" "+v).join(", ")||"-"}`,
+  `Son 15 işlem:`];
+  for(const t of P.trades.slice(-15).reverse())L.push(`  ${new Date(t.close).toLocaleString("tr-TR")} ${base(t.sym)} ${t.dir} ${t.setup} giriş ${t.entry.toPrecision(6)} çıkış ${t.exit.toPrecision(6)} (${t.why}) ${sgn(t.pnl)} · ${(tQty(t)*t.entry).toFixed(0)} USDT`);
+  for(const p of Object.values(P.positions))L.push(`  AÇIK ${base(p.sym)} ${p.dir} giriş ${p.entry.toPrecision(6)} · ${(p.qty*p.entry).toFixed(0)} USDT · anlık ${sgn(upnl(p))}`);
+  return L.join("\n")}
+$("btnReport").onclick=async()=>{if(!P)return;const txt=reportText(),box=$("reportBox"),b=$("btnReport");box.value=txt;box.hidden=false;
+  try{await navigator.clipboard.writeText(txt);b.textContent="Kopyalandı ✓"}catch{box.select();b.textContent="Metni seçip kopyala"}
+  setTimeout(()=>b.textContent="Raporu kopyala",2500)};
+setInterval(renderSummary,1000);
 
 // ---------- PİYASA ŞERİDİ: tüm USDT paritelerinin saniyelik fiyatı (herkese açık akış) ----------
 const mkt={map:new Map(),shown:[],ws:null,ok:false,host:0,retry:1000,built:0,cap:new Map(),capT:0};
