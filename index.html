@@ -835,7 +835,8 @@ function onPortClose(sym,k){
   if(t!==last+IV_MS[port.iv]){portPollOne(sym);return}
   ser.D.push({t,o:+k.o,h:+k.h,l:+k.l,c:+k.c,v:+k.v});if(ser.D.length>400)ser.D.splice(0,ser.D.length-400);ser.F=features(ser.D);
   port.lastClose=t+IV_MS[port.iv];batchAdd(processBar(sym,ser.D.length-1),t+IV_MS[port.iv])}
-async function portPollOne(sym){try{const rows=await klines(sym,port.iv,30),ser=port.series[sym];let add=false;
+async function portPollOne(sym){try{const ser0=port.series[sym],gap=ser0?Math.ceil((Date.now()-ser0.D.at(-1).t)/IV_MS[port.iv])+3:30;
+  const rows=await klines(sym,port.iv,Math.min(1000,Math.max(30,gap))),ser=port.series[sym];let add=false;
   for(const r of rows)if(r.t>ser.D.at(-1).t){ser.D.push(r);add=true}
   if(add){ser.F=features(ser.D);for(let i=ser.D.findIndex(r=>r.t>(P.lastT[sym]??0));i>=0&&i<ser.D.length;i++)batchAdd(processBar(sym,i),ser.D[i].t+IV_MS[port.iv])}}catch{}}
 // Her saniye: stop ve hedefi canlı fiyatla kontrol et
@@ -845,6 +846,31 @@ function liveStops(){if(!P||!port.ready)return;const t=Date.now();let changed=fa
     else if(p.dir==="long"?px>=p.target:px<=p.target){closeP(p.sym,px,t,"hedef (canlı)");changed=true}}
   if(changed){portRisk(t);savePort();render()}}
 setInterval(liveStops,1000);
+// ---------- BEKÇİ: sekme arka planda donarsa / bilgisayar uyursa akış sessizce kopabilir ----------
+// 60 sn boyunca hiç mum mesajı gelmezse bağlantıyı yeniden kur ve kaçırılan mumları Binance'ten çekip sırayla işle.
+let catching=false;
+async function portCatchUp(why){if(catching||!port.ready)return;catching=true;const gen=port.gen;
+  const before=P.scans,t0=Date.now();let bars=0;
+  ev("info",`${why} Kaçırılan mumlar Binance'ten çekiliyor…`);render();
+  const got=await pool(port.syms,8,async s=>{const ser=port.series[s],gap=Math.ceil((Date.now()-ser.D.at(-1).t)/IV_MS[port.iv])+3;
+    return gap>2?await klines(s,port.iv,Math.min(1000,gap)):[]});
+  if(gen!==port.gen){catching=false;return}
+  const times=new Set();
+  port.syms.forEach((s,k)=>{const g=got[k];if(!g.ok||!g.v.length)return;const ser=port.series[s];
+    for(const r of g.v)if(r.t>ser.D.at(-1).t)ser.D.push(r);
+    if(ser.D.length>400)ser.D.splice(0,ser.D.length-400);ser.F=features(ser.D);port.px[s]=ser.D.at(-1).c;
+    for(let i=ser.D.findIndex(r=>r.t>(P.lastT[s]??0));i>=0&&i<ser.D.length;i++){processBar(s,i,true);times.add(ser.D[i].t);bars++}});
+  for(const t of [...times].sort((a,b)=>a-b)){P.scans++;P.eq.push({t:t+IV_MS[port.iv],eq:portRisk(t+IV_MS[port.iv]),c:null})}
+  if(times.size)port.lastClose=Math.max(...times)+IV_MS[port.iv];
+  ev("info",`Kaçırılan ${times.size} tarama (${bars} coin-mum) işlendi. Bot güncel.`);
+  catching=false;savePort();render()}
+function portWatch(){if(!port.ready||catching)return;const idle=Date.now()-(port.lastMsg||0);
+  if(idle>60000){port.lastMsg=Date.now();portStop(true);portConnect();
+    portCatchUp(`Veri akışı ${Math.round(idle/60000)} dk kesikti (sekme arka planda donmuş ya da bilgisayar uyumuş olabilir). Yeniden bağlanıldı.`)}}
+setInterval(portWatch,15000);
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){portWatch();
+  if(live.ready&&live.tickT&&Date.now()-live.tickT>60000){stopStreams();connectWS()}}});
+window.addEventListener("online",()=>{port.lastMsg=0;portWatch()});
 
 async function addSeries(syms,gen){
   const got=await pool(syms,8,s=>klines(s,port.iv,300),(d,n)=>{if(gen===port.gen&&!port.ready){port.load=`${d}/${n}`;if(d%10===0||d===n)renderLive()}});
@@ -881,14 +907,14 @@ async function portRefresh(gen){if(!port.ready||gen!==port.gen)return;
   portStop(true);portConnect();savePort();render()}
 function portStop(keepTimers){if(!keepTimers){clearInterval(port.poll);clearInterval(port.uni)}
   for(const ws of port.socks){ws.onclose=null;try{ws.close()}catch{}}port.socks=[];port.wsOk=false}
-function portConnect(){
+function portConnect(){port.lastMsg=Date.now();
   for(let i=0;i<port.syms.length;i+=WS_CHUNK)portSock(port.syms.slice(i,i+WS_CHUNK),port.gen,true)}
 function portSock(list,gen,first){
   const url=`${WS_HOSTS[port.host]}/stream?streams=`+list.map(s=>s.toLowerCase()+"@kline_"+port.iv).join("/");
   let ws;try{ws=new WebSocket(url)}catch{return portRetry(list,gen)}port.socks.push(ws);
   ws.onopen=()=>{const was=port.wsOk;port.wsOk=true;port.retry=1000;if(!was)ev("info",`Bot ${port.syms.length} coinin canlı mum akışına bağlandı.`);render()};
   ws.onmessage=m=>{let d;try{d=JSON.parse(m.data).data}catch{return}if(!d||d.e!=="kline")return;
-    port.px[d.s]=+d.k.c;if(d.k.x)onPortClose(d.s,d.k)};
+    port.lastMsg=Date.now();port.px[d.s]=+d.k.c;if(d.k.x)onPortClose(d.s,d.k)};
   ws.onclose=()=>{port.socks=port.socks.filter(x=>x!==ws);port.wsOk=port.socks.some(x=>x.readyState===1);portRetry(list,gen)};
   ws.onerror=()=>{try{ws.close()}catch{}}}
 function portRetry(list,gen){port.host=(port.host+1)%WS_HOSTS.length;const w=port.retry;port.retry=Math.min(30000,w*2);
