@@ -223,6 +223,7 @@ td.px.up{color:var(--good)}td.px.dn{color:var(--bad)}
 .sumrow{display:flex;gap:8px 22px;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--muted)}.sumrow b{color:var(--ink)}
 .reportbox{width:100%;margin-top:12px;min-height:180px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:var(--r-md);padding:10px;font:12px/1.5 ui-monospace,monospace}
 @media (max-width:720px){.sumgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+#btnWake[aria-pressed="true"]{border-color:var(--blue2);color:var(--blue2)}
 </style>
 
 <div class="app">
@@ -295,7 +296,7 @@ td.px.up{color:var(--good)}td.px.dn{color:var(--bad)}
           <button class="btn ghost" id="btnRunAll">Sonuna git</button>
           <button class="btn ghost" id="btnReset">Sıfırla</button>
         </div>
-        <div class="liverow" id="liveRow"><div class="liveinfo" id="liveInfo"></div><button class="btn ghost" id="btnLiveReset">Canlı hesabı sıfırla</button></div>
+        <div class="liverow" id="liveRow"><div class="liveinfo" id="liveInfo"></div><span style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" id="btnWake" aria-pressed="false" title="Bilgisayarın ekranı kapatıp uyumasını engeller; bot kesintisiz çalışır">Ekranı açık tut</button><button class="btn ghost" id="btnLiveReset">Canlı hesabı sıfırla</button></span></div>
         <div class="small" id="chartNote" style="margin-top:8px"></div>
       </section>
 
@@ -749,7 +750,7 @@ const WS_HOSTS=["wss://data-stream.binance.vision","wss://stream.binance.com:944
 const IV_MS={"1m":60e3,"5m":300e3,"15m":900e3,"1h":3600e3};
 const IV_TR={"1m":"1 dk","5m":"5 dk","15m":"15 dk","1h":"1 saat"};
 // grafikte gösterilen coin
-const live={sym:store.get("mp.sym","BTCUSDT"),iv:store.get("mp.iv","5m"),price:null,chg:null,hi:null,lo:null,tickT:null,
+const live={sym:store.get("mp.sym","BTCUSDT"),iv:store.get("mp.iv","1m"),price:null,chg:null,hi:null,lo:null,tickT:null,
   forming:null,ws:null,wsOk:false,wsHost:0,retry:1000,poll:null,ready:false};
 let mode="live",S_live=null,S_test=null,P=null,feedFilter="all";
 const hhmm=t=>new Date(t).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"});
@@ -820,7 +821,7 @@ function processBar(sym,i,quiet){
     else if(Object.keys(P.positions).length+Object.keys(P.pendings).length>=MAX_OPEN)v="max açık pozisyon";else v="onaylandı";
     if(dec.direction!=="flat")P.decisions.push({t:bar.t,sym,...dec,setup:dec.setup,verdict:v});
     if(v==="onaylandı"){const vol=isFinite(f.vol)?f.vol:0.01;P.pendings[sym]={dec,scale:dec.risk_state==="reduced"?.5:1,k:Math.max(0.004,2*vol*Math.sqrt(6))};
-      ev("signal",`SİNYAL · ${base(sym)} ${dec.direction} · ${dec.setup} · olasılık %${Math.round(dec.p*100)} · sonraki mum açılışında girilecek`,bar.t+IV_MS[port.iv])}
+      ev("signal",`SİNYAL · ${base(sym)} ${dec.direction} · ${dec.setup} · varsayılan olasılık %${Math.round(dec.p*100)} · sonraki mum açılışında girilecek`,bar.t+IV_MS[port.iv])}
     res.verdict=v;res.dec=dec}
   P.lastT[sym]=bar.t;return res}
 // Aynı anda kapanan mumları tek "tarama" olarak özetle
@@ -879,12 +880,24 @@ function portWatch(){if(!port.ready||catching)return;const idle=Date.now()-(port
   if(idle>60000){diag(`Bot veri akışı ${Math.round(idle/60000)} dk sessiz kaldı, yeniden bağlanılıyor`);port.lastMsg=Date.now();portStop(true);portConnect();
     portCatchUp(`Veri akışı ${Math.round(idle/60000)} dk kesikti (sekme arka planda donmuş ya da bilgisayar uyumuş olabilir). Yeniden bağlanıldı.`)}}
 setInterval(portWatch,15000);
+// ---------- EKRANI AÇIK TUT: bilgisayar ekranı kapatıp uyumasın, tarayıcı sekmeyi dondurmasın ----------
+const wake={on:store.get("mp.wake",true),lock:null};
+async function wakeApply(){const b=$("btnWake");
+  if(!("wakeLock" in navigator)){b.textContent="Ekranı açık tut (tarayıcı desteklemiyor)";b.disabled=true;return}
+  if(wake.on&&!wake.lock&&document.visibilityState==="visible"){try{wake.lock=await navigator.wakeLock.request("screen");diag("Ekranı açık tut etkin");
+    wake.lock.addEventListener("release",()=>{wake.lock=null;diag("Ekranı açık tut bırakıldı");wakeUI()})}catch(e){diag("Ekranı açık tut alınamadı: "+e.message)}}
+  if(!wake.on&&wake.lock){wake.lock.release();wake.lock=null}wakeUI()}
+function wakeUI(){const b=$("btnWake");b.setAttribute("aria-pressed",!!wake.on);b.textContent=wake.on?(wake.lock?"Ekran açık tutuluyor ✓":"Ekranı açık tut (sekmeye dön)"):"Ekranı açık tut"}
+$("btnWake").onclick=()=>{wake.on=!wake.on;store.set("mp.wake",wake.on);wakeApply()};
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")wakeApply()});
+wakeApply();
+
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){portWatch();
   if(live.ready&&live.tickT&&Date.now()-live.tickT>60000){stopStreams();connectWS()}}});
 window.addEventListener("online",()=>{port.lastMsg=0;portWatch()});
 
 async function addSeries(syms,gen){
-  const got=await pool(syms,8,s=>klines(s,port.iv,300),(d,n)=>{if(gen===port.gen&&!port.ready){port.load=`${d}/${n}`;if(d%10===0||d===n)renderLive()}});
+  const got=await pool(syms,8,s=>klines(s,port.iv,200),(d,n)=>{if(gen===port.gen&&!port.ready){port.load=`${d}/${n}`;if(d%10===0||d===n)renderLive()}});
   if(gen!==port.gen)return [];const ok=[];
   syms.forEach((s,i)=>{const g=got[i];if(!g.ok||g.v.length<MIN_BARS)return;port.series[s]={D:g.v,F:features(g.v)};ok.push(s)});return ok}
 async function portStart(){
