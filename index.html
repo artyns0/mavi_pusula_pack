@@ -846,6 +846,17 @@ function liveStops(){if(!P||!port.ready)return;const t=Date.now();let changed=fa
     else if(p.dir==="long"?px>=p.target:px<=p.target){closeP(p.sym,px,t,"hedef (canlı)");changed=true}}
   if(changed){portRisk(t);savePort();render()}}
 setInterval(liveStops,1000);
+// ---------- SAĞLIK KAYDI: botun neden durduğunu sonradan anlamak için ----------
+// Sayfa zamanlayıcısı 30 sn'de bir çalışır; arada 2 dk'dan uzun boşluk varsa sayfa dondurulmuş/uyutulmuş demektir.
+const DG=store.get("mp.diag",{log:[],beat:0});DG.beat=0;
+function diag(msg){DG.log.push({t:Date.now(),m:msg});if(DG.log.length>80)DG.log.splice(0,DG.log.length-80);store.set("mp.diag",DG)}
+function beat(){const now=Date.now();if(DG.beat&&now-DG.beat>120000)diag(`Sayfa ${Math.round((now-DG.beat)/60000)} dk boyunca hiç çalışmadı (tarayıcı sekmeyi dondurdu ya da uyuttu)`);
+  DG.beat=now;store.set("mp.diag",DG)}
+diag("Sayfa açıldı");setInterval(beat,30000);
+document.addEventListener("visibilitychange",()=>diag(document.visibilityState==="visible"?"Sekme öne geldi":"Sekme arka plana geçti"));
+document.addEventListener("freeze",()=>diag("Tarayıcı sekmeyi dondurdu (freeze)"));document.addEventListener("resume",()=>diag("Sekme dondurmadan çıktı"));
+window.addEventListener("offline",()=>diag("İnternet bağlantısı koptu"));window.addEventListener("online",()=>diag("İnternet geri geldi"));
+window.addEventListener("error",e=>diag("Kod hatası: "+(e.message||"?")));window.addEventListener("unhandledrejection",e=>diag("Kod hatası: "+(e.reason&&e.reason.message||e.reason)));
 // ---------- BEKÇİ: sekme arka planda donarsa / bilgisayar uyursa akış sessizce kopabilir ----------
 // 60 sn boyunca hiç mum mesajı gelmezse bağlantıyı yeniden kur ve kaçırılan mumları Binance'ten çekip sırayla işle.
 let catching=false;
@@ -865,7 +876,7 @@ async function portCatchUp(why){if(catching||!port.ready)return;catching=true;co
   ev("info",`Kaçırılan ${times.size} tarama (${bars} coin-mum) işlendi. Bot güncel.`);
   catching=false;savePort();render()}
 function portWatch(){if(!port.ready||catching)return;const idle=Date.now()-(port.lastMsg||0);
-  if(idle>60000){port.lastMsg=Date.now();portStop(true);portConnect();
+  if(idle>60000){diag(`Bot veri akışı ${Math.round(idle/60000)} dk sessiz kaldı, yeniden bağlanılıyor`);port.lastMsg=Date.now();portStop(true);portConnect();
     portCatchUp(`Veri akışı ${Math.round(idle/60000)} dk kesikti (sekme arka planda donmuş ya da bilgisayar uyumuş olabilir). Yeniden bağlanıldı.`)}}
 setInterval(portWatch,15000);
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){portWatch();
@@ -912,10 +923,10 @@ function portConnect(){port.lastMsg=Date.now();
 function portSock(list,gen,first){
   const url=`${WS_HOSTS[port.host]}/stream?streams=`+list.map(s=>s.toLowerCase()+"@kline_"+port.iv).join("/");
   let ws;try{ws=new WebSocket(url)}catch{return portRetry(list,gen)}port.socks.push(ws);
-  ws.onopen=()=>{const was=port.wsOk;port.wsOk=true;port.retry=1000;if(!was)ev("info",`Bot ${port.syms.length} coinin canlı mum akışına bağlandı.`);render()};
+  ws.onopen=()=>{diag(`Bot bağlantısı açıldı (${list.length} coin)`);const was=port.wsOk;port.wsOk=true;port.retry=1000;if(!was)ev("info",`Bot ${port.syms.length} coinin canlı mum akışına bağlandı.`);render()};
   ws.onmessage=m=>{let d;try{d=JSON.parse(m.data).data}catch{return}if(!d||d.e!=="kline")return;
     port.lastMsg=Date.now();port.px[d.s]=+d.k.c;if(d.k.x)onPortClose(d.s,d.k)};
-  ws.onclose=()=>{port.socks=port.socks.filter(x=>x!==ws);port.wsOk=port.socks.some(x=>x.readyState===1);portRetry(list,gen)};
+  ws.onclose=e=>{diag(`Bot bağlantısı kapandı (kod ${e.code})`);port.socks=port.socks.filter(x=>x!==ws);port.wsOk=port.socks.some(x=>x.readyState===1);portRetry(list,gen)};
   ws.onerror=()=>{try{ws.close()}catch{}}}
 function portRetry(list,gen){port.host=(port.host+1)%WS_HOSTS.length;const w=port.retry;port.retry=Math.min(30000,w*2);
   setTimeout(()=>{if(gen===port.gen)portSock(list,gen)},w)}
@@ -1038,6 +1049,7 @@ function reportText(){const m=botSummary(),sgn=v=>(v>=0?"+":"")+v.toFixed(2);
   `Coin bazında: ${m.syms.slice(0,15).map(([s,b])=>`${base(s)} ${b.n} işlem ${sgn(b.pnl)}`).join("; ")||"-"}`,
   `Setup bazında: ${Object.entries(P.trades.reduce((a,t)=>{const b=a[t.setup]??={n:0,w:0,p:0};b.n++;b.w+=t.pnl>0;b.p+=t.pnl;return a},{})).map(([k,b])=>`${k} ${b.n} işlem %${Math.round(100*b.w/b.n)} ${sgn(b.p)}`).join("; ")||"-"}`,
   `Sinyal kararları: ${Object.entries(P.decisions.reduce((a,d)=>{a[d.verdict]=(a[d.verdict]||0)+1;return a},{})).map(([k,v])=>k+" "+v).join(", ")||"-"}`,
+  `Sağlık kaydı (son 25):`,...DG.log.slice(-25).map(x=>`  ${new Date(x.t).toLocaleString("tr-TR")} ${x.m}`),
   `Son 15 işlem:`];
   for(const t of P.trades.slice(-15).reverse())L.push(`  ${new Date(t.close).toLocaleString("tr-TR")} ${base(t.sym)} ${t.dir} ${t.setup} giriş ${t.entry.toPrecision(6)} çıkış ${t.exit.toPrecision(6)} (${t.why}) ${sgn(t.pnl)} · ${(tQty(t)*t.entry).toFixed(0)} USDT`);
   for(const p of Object.values(P.positions))L.push(`  AÇIK ${base(p.sym)} ${p.dir} giriş ${p.entry.toPrecision(6)} · ${(p.qty*p.entry).toFixed(0)} USDT · anlık ${sgn(upnl(p))}`);
@@ -1064,7 +1076,7 @@ function mktConnect(){
     for(const t of a){if(!t.s.endsWith("USDT")||STABLE.test(t.s)||/(UP|DOWN|BULL|BEAR)USDT$/.test(t.s))continue;
       const prev=mkt.map.get(t.s);mkt.map.set(t.s,{s:t.s,c:+t.c,o:+t.o,q:+t.q,h:+t.h,l:+t.l,prev:prev?prev.c:+t.c,h1:prev?prev.h1:null})}
     if(!mkt.built||Date.now()-mkt.built>600000)mktBuild();mktUpdate()};
-  ws.onclose=()=>{mkt.ok=false;$("stDot").className="dot idle";mktRetry()};
+  ws.onclose=e=>{diag(`Piyasa şeridi bağlantısı kapandı (kod ${e.code})`);mkt.ok=false;$("stDot").className="dot idle";mktRetry()};
   ws.onerror=()=>{try{ws.close()}catch{}};
 }
 function mktRetry(){mkt.host=(mkt.host+1)%WS_HOSTS.length;const w=mkt.retry;mkt.retry=Math.min(30000,w*2);setTimeout(mktConnect,w)}
